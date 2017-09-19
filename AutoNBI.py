@@ -83,12 +83,14 @@ import optparse
 import shutil
 from distutils.version import LooseVersion
 from distutils.spawn import find_executable
-from ctypes import CDLL, Structure, c_void_p, c_size_t, c_uint, c_uint32, c_uint64, create_string_buffer, addressof, sizeof, byref
+from ctypes import CDLL, Structure, c_void_p, c_size_t, c_uint, c_uint32, c_uint64, create_string_buffer, addressof, \
+    sizeof, byref
 import objc
 
 sys.path.append("/usr/local/munki/munkilib")
 import FoundationPlist
 from xml.parsers.expat import ExpatError
+
 
 def _get_mac_ver():
     import subprocess
@@ -96,16 +98,19 @@ def _get_mac_ver():
     stdout, stderr = p.communicate()
     return stdout.strip()
 
+
 # Setup access to the ServerInformation private framework to match board IDs to
 #   model IDs if encountered (10.11 only so far) Code by Michael Lynn. Thanks!
 class attrdict(dict):
     __getattr__ = dict.__getitem__
     __setattr__ = dict.__setitem__
 
+
 ServerInformation = attrdict()
 ServerInformation_bundle = objc.loadBundle('ServerInformation',
-                                            ServerInformation,
-    bundle_path='/System/Library/PrivateFrameworks/ServerInformation.framework')
+                                           ServerInformation,
+                                           bundle_path='/System/Library/PrivateFrameworks/ServerInformation.framework')
+
 
 #  Below code from COSXIP by Greg Neagle
 
@@ -169,12 +174,13 @@ def unmountdmg(mountpoint):
         print >> sys.stderr, 'Attempting to force unmount %s' % mountpoint
         # try forcing the unmount
         retcode = subprocess.call(['/usr/bin/hdiutil', 'detach', '-force',
-                                    mountpoint])
+                                   mountpoint])
         print('Unmounting successful...')
         if retcode:
             print >> sys.stderr, 'Failed to unmount %s' % mountpoint
 
-#  Above code from COSXIP by Greg Neagle
+
+# Above code from COSXIP by Greg Neagle
 
 def convertdmg(dmgpath, nbishadow):
     """
@@ -197,6 +203,7 @@ def convertdmg(dmgpath, nbishadow):
 
     # Return the name of the converted DMG back to the caller
     return dmgfinal + '.sparseimage'
+
 
 def getosversioninfo(mountpoint):
     """"getosversioninfo will attempt to retrieve the OS X version and build
@@ -442,48 +449,52 @@ def prepworkdir(workdir):
 
         plistlib.writePlist(enterprisedict, os.path.join(workdir, '.SIUSettings'))
 
+
 # Example usage of the function:
 # decompress('PayloadJava.cpio.xz', 'PayloadJava.cpio')
 # Decompresses a xz compressed file from the first input file path to the second output file path
 
 class lzma_stream(Structure):
     _fields_ = [
-        ("next_in",        c_void_p),
-        ("avail_in",       c_size_t),
-        ("total_in",       c_uint64),
-        ("next_out",       c_void_p),
-        ("avail_out",      c_size_t),
-        ("total_out",      c_uint64),
-        ("allocator",      c_void_p),
-        ("internal",       c_void_p),
-        ("reserved_ptr1",  c_void_p),
-        ("reserved_ptr2",  c_void_p),
-        ("reserved_ptr3",  c_void_p),
-        ("reserved_ptr4",  c_void_p),
-        ("reserved_int1",  c_uint64),
-        ("reserved_int2",  c_uint64),
-        ("reserved_int3",  c_size_t),
-        ("reserved_int4",  c_size_t),
+        ("next_in", c_void_p),
+        ("avail_in", c_size_t),
+        ("total_in", c_uint64),
+        ("next_out", c_void_p),
+        ("avail_out", c_size_t),
+        ("total_out", c_uint64),
+        ("allocator", c_void_p),
+        ("internal", c_void_p),
+        ("reserved_ptr1", c_void_p),
+        ("reserved_ptr2", c_void_p),
+        ("reserved_ptr3", c_void_p),
+        ("reserved_ptr4", c_void_p),
+        ("reserved_int1", c_uint64),
+        ("reserved_int2", c_uint64),
+        ("reserved_int3", c_size_t),
+        ("reserved_int4", c_size_t),
         ("reserved_enum1", c_uint),
         ("reserved_enum2", c_uint),
     ]
+
 
 # Hardcoded this path to the System liblzma dylib location, so that /usr/local/lib or other user
 # installed library locations aren't used (which ctypes.util.find_library(...) would hit).
 # Available in OS X 10.7+
 c_liblzma = CDLL('/usr/lib/liblzma.dylib')
 
-NULL               = None
-BUFSIZ             = 65535
-LZMA_OK            = 0
-LZMA_RUN           = 0
-LZMA_FINISH        = 3
-LZMA_STREAM_END    = 1
-BLANK_BUF          = '\x00'*BUFSIZ
-UINT64_MAX         = c_uint64(18446744073709551615)
-LZMA_CONCATENATED  = c_uint32(0x08)
+NULL = None
+BUFSIZ = 65535
+LZMA_OK = 0
+LZMA_RUN = 0
+LZMA_FINISH = 3
+LZMA_STREAM_END = 1
+BLANK_BUF = '\x00' * BUFSIZ
+UINT64_MAX = c_uint64(18446744073709551615)
+LZMA_CONCATENATED = c_uint32(0x08)
 LZMA_RESERVED_ENUM = 0
-LZMA_STREAM_INIT   = [NULL, 0, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, LZMA_RESERVED_ENUM, LZMA_RESERVED_ENUM]
+LZMA_STREAM_INIT = [NULL, 0, 0, NULL, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, 0, 0, 0, 0, LZMA_RESERVED_ENUM,
+                    LZMA_RESERVED_ENUM]
+
 
 def decompress(infile, outfile):
     # Create an empty lzma_stream object
@@ -494,11 +505,11 @@ def decompress(infile, outfile):
 
     # Setup the output buffer
     outbuf = create_string_buffer(BUFSIZ)
-    strm.next_out  = addressof(outbuf)
+    strm.next_out = addressof(outbuf)
     strm.avail_out = sizeof(outbuf)
 
     # Setup the (blank) input buffer
-    inbuf  = create_string_buffer(BUFSIZ)
+    inbuf = create_string_buffer(BUFSIZ)
     strm.next_in = addressof(inbuf)
     strm.avail_in = 0
 
@@ -511,7 +522,7 @@ def decompress(infile, outfile):
     xz_file = open(infile, 'rb')
 
     cursor = 0
-    xz_file.seek(0,2)
+    xz_file.seek(0, 2)
     EOF = xz_file.tell()
     xz_file.seek(0)
 
@@ -531,11 +542,11 @@ def decompress(infile, outfile):
             # - Attempt to take a BUFSIZ chunk of data
             input_chunk = xz_file.read(BUFSIZ)
             # - Measure how much we actually got
-            input_len   = len(input_chunk)
+            input_len = len(input_chunk)
             # - Assign the data to the buffer
             inbuf[0:input_len] = input_chunk
             # - Configure our chunk input information
-            strm.next_in  = addressof(inbuf)
+            strm.next_in = addressof(inbuf)
             strm.avail_in = input_len
             # - Adjust our cursor
             cursor += input_len
@@ -548,14 +559,14 @@ def decompress(infile, outfile):
         if ((strm.avail_out == 0) or (result == LZMA_STREAM_END)):
             # Write out what data we have!
             # - Measure how much we got
-            output_len   = BUFSIZ - strm.avail_out
+            output_len = BUFSIZ - strm.avail_out
             # - Get that much from the buffer
             output_chunk = outbuf.raw[:output_len]
             # - Write it out
             f_out.write(output_chunk)
             # - Reset output information to a full available buffer
             # (Intentionally not clearing the output buffer here .. but probably could?)
-            strm.next_out  = addressof(outbuf)
+            strm.next_out = addressof(outbuf)
             strm.avail_out = sizeof(outbuf)
         if (result != LZMA_OK):
             if (result == LZMA_STREAM_END):
@@ -574,14 +585,13 @@ class processNBI(object):
         created by createnbi()"""
 
     # Don't think we need this.
-    def __init__(self, customfolder = None, enablepython=False, enableruby=False, utilplist=False):
-         super(processNBI, self).__init__()
-         self.customfolder = customfolder
-         self.enablepython = enablepython
-         self.enableruby = enableruby
-         self.utilplist = utilplist
-         self.hdiutil = '/usr/bin/hdiutil'
-
+    def __init__(self, customfolder=None, enablepython=False, enableruby=False, utilplist=False):
+        super(processNBI, self).__init__()
+        self.customfolder = customfolder
+        self.enablepython = enablepython
+        self.enableruby = enableruby
+        self.utilplist = utilplist
+        self.hdiutil = '/usr/bin/hdiutil'
 
     # Make the provided NetInstall.dmg r/w by mounting it with a shadow file
     def makerw(self, netinstallpath):
@@ -596,29 +606,31 @@ class processNBI(object):
     # def enableframeworks(self, source, shadow):
 
     def dmgattach(self, attach_source, shadow_file):
-        return [ self.hdiutil, 'attach',
-                               '-shadow', shadow_file,
-                               '-mountRandom', TMPDIR,
-                               '-nobrowse',
-                               '-plist',
-                               '-owners', 'on',
-                               attach_source ]
+        return [self.hdiutil, 'attach',
+                '-shadow', shadow_file,
+                '-mountRandom', TMPDIR,
+                '-nobrowse',
+                '-plist',
+                '-owners', 'on',
+                attach_source]
+
     def dmgdetach(self, detach_mountpoint):
-        return [ self.hdiutil, 'detach', '-force',
-                          detach_mountpoint ]
+        return [self.hdiutil, 'detach', '-force',
+                detach_mountpoint]
+
     def dmgconvert(self, convert_source, convert_target, shadow_file, mode):
         # We have a shadow file, so use it. Otherwise don't.
         if shadow_file:
-            command = [ self.hdiutil, 'convert',
-                              '-format', mode,
-                              '-o', convert_target,
-                              '-shadow', shadow_file,
-                              convert_source ]
+            command = [self.hdiutil, 'convert',
+                       '-format', mode,
+                       '-o', convert_target,
+                       '-shadow', shadow_file,
+                       convert_source]
         else:
-            command = [ self.hdiutil, 'convert',
-                              '-format', mode,
-                              '-o', convert_target,
-                              convert_source ]
+            command = [self.hdiutil, 'convert',
+                       '-format', mode,
+                       '-o', convert_target,
+                       convert_source]
         return command
 
     def dmgresize(self, resize_source, shadow_file=None, size=None):
@@ -626,36 +638,39 @@ class processNBI(object):
         print "Will resize DMG at mount: %s" % resize_source
 
         if shadow_file:
-            return [ self.hdiutil, 'resize',
-                          '-size', size,
-                          '-shadow', shadow_file,
-                          resize_source ]
+            return [self.hdiutil, 'resize',
+                    '-size', size,
+                    '-shadow', shadow_file,
+                    resize_source]
         else:
             proc = subprocess.Popen(['/usr/bin/hdiutil', 'resize', '-limits', resize_source],
-                                      bufsize=-1, stdout=subprocess.PIPE,
-                                      stderr=subprocess.PIPE)
+                                    bufsize=-1, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE)
 
             (output, err) = proc.communicate()
 
             size = output.split('\t')[0]
 
-            return [ self.hdiutil, 'resize',
-                          '-size', '%sb' % size, resize_source ]
+            return [self.hdiutil, 'resize',
+                    '-size', '%sb' % size, resize_source]
 
     def xarextract(self, xar_source, sysplatform):
 
         if 'darwin' in sysplatform:
-            return [ '/usr/bin/xar', '-x',
-                                     '-f', xar_source,
-                                     'Payload',
-                                     '-C', TMPDIR ]
+            return ['/usr/bin/xar', '-x',
+                    '-f', xar_source,
+                    'Payload',
+                    '-C', TMPDIR]
         else:
             # TO-DO: decompress xz lzma with Python
             pass
+
     def cpioextract(self, cpio_archive, pattern):
-        return [ '/usr/bin/cpio -idmu --quiet -I %s %s' % (cpio_archive, pattern) ]
+        return ['/usr/bin/cpio -idmu --quiet -I %s %s' % (cpio_archive, pattern)]
+
     def xzextract(self, xzexec, xzfile):
         return ['%s -d %s' % (xzexec, xzfile)]
+
     def getfiletype(self, filepath):
         return ['/usr/bin/file', filepath]
 
@@ -665,12 +680,12 @@ class processNBI(object):
 
         if type(cwd) is not str:
             proc = subprocess.Popen(cmd, bufsize=-1,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             (result, err) = proc.communicate()
         else:
             proc = subprocess.Popen(cmd, bufsize=-1,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
-                            shell=True)
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
+                                    shell=True)
             (result, err) = proc.communicate()
 
         if proc.returncode:
@@ -683,7 +698,7 @@ class processNBI(object):
     def seekread(self, f, offset=None, length=0, relative=True):
         if (offset != None):
             # offset provided, let's seek
-            f.seek(offset, [0,1,2][relative])
+            f.seek(offset, [0, 1, 2][relative])
         if (length != 0):
             return f.read(length)
 
@@ -696,29 +711,29 @@ class processNBI(object):
         f = open(pbzx_path, 'rb')
         # pbzx = f.read()
         # f.close()
-        magic = self.seekread(f,length=4)
+        magic = self.seekread(f, length=4)
         if magic != 'pbzx':
             raise "Error: Not a pbzx file"
         # Read 8 bytes for initial flags
-        flags = self.seekread(f,length=8)
+        flags = self.seekread(f, length=8)
         # Interpret the flags as a 64-bit big-endian unsigned int
         flags = struct.unpack('>Q', flags)[0]
         xar_f = open(xar_out_path, 'wb')
         archivechunks.append(xar_out_path)
         while (flags & (1 << 24)):
             # Read in more flags
-            flags = self.seekread(f,length=8)
+            flags = self.seekread(f, length=8)
             flags = struct.unpack('>Q', flags)[0]
             # Read in length
-            f_length = self.seekread(f,length=8)
+            f_length = self.seekread(f, length=8)
             f_length = struct.unpack('>Q', f_length)[0]
-            xzmagic = self.seekread(f,length=6)
+            xzmagic = self.seekread(f, length=6)
             if xzmagic != '\xfd7zXZ\x00':
                 # This isn't xz content, this is actually _raw decompressed cpio_ chunk of 16MB in size...
                 # Let's back up ...
-                self.seekread(f,offset=-6,length=0)
+                self.seekread(f, offset=-6, length=0)
                 # ... and split it out ...
-                f_content = self.seekread(f,length=f_length)
+                f_content = self.seekread(f, length=f_length)
                 section += 1
                 decomp_out = '%s.part%02d.cpio' % (pbzx_path, section)
                 g = open(decomp_out, 'wb')
@@ -734,8 +749,8 @@ class processNBI(object):
             else:
                 f_length -= 6
                 # This part needs buffering
-                f_content = self.seekread(f,length=f_length)
-                tail = self.seekread(f,offset=-2,length=2)
+                f_content = self.seekread(f, length=f_length)
+                tail = self.seekread(f, offset=-2, length=2)
                 xar_f.write(xzmagic)
                 xar_f.write(f_content)
                 if tail != 'YZ':
@@ -793,7 +808,6 @@ class processNBI(object):
             # No pbzx wrapper, rename and move to cpio extraction
             os.rename(payloadsource, cpio_archive)
 
-
     # Allows modifications to be made to a DMG previously made writable by
     #   processNBI.makerw()
     def modify(self, nbimount, dmgpath, nbishadow, installersource):
@@ -808,34 +822,34 @@ class processNBI(object):
         if isHighSierra:
             # In High Sierra pretty much everything is in Core. New name. Same contents.
             # We also need to add libssl as it's no longer standard.
-            payloads = { 'python': {'sourcepayloads': ['Core'],
-                                    'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libcrypto*\" \"*libffi.dylib*\" \"*libexpat*\"'},
-                         'ruby': {'sourcepayloads': ['Core'],
-                                  'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                       }
+            payloads = {'python': {'sourcepayloads': ['Core'],
+                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libcrypto*\" \"*libffi.dylib*\" \"*libexpat*\"'},
+                        'ruby': {'sourcepayloads': ['Core'],
+                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
+                        }
 
         elif isSierra:
             # In Sierra pretty much everything is in Essentials.
             # We also need to add libssl as it's no longer standard.
-            payloads = { 'python': {'sourcepayloads': ['Essentials'],
-                                    'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libffi.dylib*\" \"*libexpat*\"'},
-                         'ruby': {'sourcepayloads': ['Essentials'],
-                                  'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                       }
+            payloads = {'python': {'sourcepayloads': ['Essentials'],
+                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libffi.dylib*\" \"*libexpat*\"'},
+                        'ruby': {'sourcepayloads': ['Essentials'],
+                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
+                        }
         elif isElCap:
             # In ElCap pretty much everything is in Essentials.
             # We also need to add libssl as it's no longer standard.
-            payloads = { 'python': {'sourcepayloads': ['Essentials'],
-                                    'regex': '\"*Py*\" \"*py*\" \"*libssl*\"'},
-                         'ruby': {'sourcepayloads': ['Essentials'],
-                                  'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                       }
+            payloads = {'python': {'sourcepayloads': ['Essentials'],
+                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\"'},
+                        'ruby': {'sourcepayloads': ['Essentials'],
+                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
+                        }
         else:
-            payloads = { 'python': {'sourcepayloads': ['BSD'],
-                                    'regex': '\"*Py*\" \"*py*\"'},
-                         'ruby': {'sourcepayloads': ['BSD', 'Essentials'],
-                                  'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"'}
-                       }
+            payloads = {'python': {'sourcepayloads': ['BSD'],
+                                   'regex': '\"*Py*\" \"*py*\"'},
+                        'ruby': {'sourcepayloads': ['BSD', 'Essentials'],
+                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"'}
+                        }
         # Set 'modifybasesystem' if any frameworks are to be added, we're building
         #   an ElCap NBI or if we're adding a custom Utilites plist
         modifybasesystem = (len(addframeworks) > 0 or isElCap or isSierra or isHighSierra or self.utilplist)
@@ -851,7 +865,8 @@ class processNBI(object):
             else:
                 print("Install source is 10.13 or newer, BaseSystem.dmg is in an alternate location...")
                 basesystemshadow = os.path.join(TMPDIR, 'BaseSystem.shadow')
-                basesystemdmg = os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.dmg')
+                basesystemdmg = os.path.join(nbimount,
+                                             'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.dmg')
 
             print("Running self.dmgresize...")
             result = self.runcmd(self.dmgresize(basesystemdmg, basesystemshadow, '8G'))
@@ -861,7 +876,7 @@ class processNBI(object):
             # print("Contents of plist:\n------\n%s\n------" % plist)
 
             basesystemplist = plistlib.readPlistFromString(plist)
-            
+
             # print("Contents of basesystemplist:\n------\n%s\n------" % basesystemplist)
 
             for entity in basesystemplist['system-entities']:
@@ -889,7 +904,8 @@ class processNBI(object):
                     if line.rstrip() == "LAUNCH=\"/System/Library/CoreServices/Language Chooser.app/Contents/MacOS/Language Chooser\"":
                         rcdotinstallw.write("LAUNCH=/bin/echo")
                         # Add back ElCap code to source system imaging extras files
-                        rcdotinstallw.write("\nif [ -x /System/Installation/Packages/Extras/rc.imaging ]; then\n\t/System/Installation/Packages/Extras/rc.imaging\nfi")
+                        rcdotinstallw.write(
+                            "\nif [ -x /System/Installation/Packages/Extras/rc.imaging ]; then\n\t/System/Installation/Packages/Extras/rc.imaging\nfi")
                     else:
                         rcdotinstallw.write(line)
 
@@ -932,7 +948,8 @@ class processNBI(object):
             processdir = os.path.join(nbimount, ''.join(self.customfolder.split('/')[-1:]))
 
             if isHighSierra:
-                processdir = os.path.join(basesystemmountpoint, 'System/Installation', ''.join(self.customfolder.split('/')[-1:]))
+                processdir = os.path.join(basesystemmountpoint, 'System/Installation',
+                                          ''.join(self.customfolder.split('/')[-1:]))
 
             # Remove folder being modified - distutils appears to have the easiest
             # method to recursively delete a folder. Same with recursively copying
@@ -956,8 +973,10 @@ class processNBI(object):
 
             # High Sierra 10.13 contains the InstallESD.dmg as part of the installer app, remove it to free up space
             if isHighSierra:
-                if os.path.exists(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg')):
-                    os.unlink(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg'))
+                if os.path.exists(os.path.join(nbimount,
+                                               'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg')):
+                    os.unlink(os.path.join(nbimount,
+                                           'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg'))
 
         # Is Python or Ruby being added? If so, do the work.
         if addframeworks:
@@ -1024,7 +1043,7 @@ class processNBI(object):
             print("Adding custom Utilities.plist from %s" % self.utilplist)
             try:
                 shutil.copyfile(os.path.abspath(self.utilplist), os.path.join(basesystemmountpoint,
-                                'System/Installation/CDIS/OS X Utilities.app/Contents/Resources/Utilities.plist'))
+                                                                              'System/Installation/CDIS/OS X Utilities.app/Contents/Resources/Utilities.plist'))
             except:
                 print("Failed to add custom Utilites plist from %s" % self.utilplist)
 
@@ -1055,17 +1074,23 @@ class processNBI(object):
             # For High Sierra, remove the chunklists for InstallESD and BaseSystem since they won't match
             # This includes removing chunklist entry from InstallInfo.plist
             if isHighSierra:
-                if os.path.exists(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.chunklist')):
-                    os.unlink(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.chunklist'))
-                if os.path.exists(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.chunklist')):
-                    os.unlink(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.chunklist'))
+                if os.path.exists(os.path.join(nbimount,
+                                               'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.chunklist')):
+                    os.unlink(os.path.join(nbimount,
+                                           'Install macOS High Sierra Beta.app/Contents/SharedSupport/BaseSystem.chunklist'))
+                if os.path.exists(os.path.join(nbimount,
+                                               'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.chunklist')):
+                    os.unlink(os.path.join(nbimount,
+                                           'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.chunklist'))
 
-                installinfoplist = plistlib.readPlist(os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallInfo.plist'))
+                installinfoplist = plistlib.readPlist(os.path.join(nbimount,
+                                                                   'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallInfo.plist'))
                 if installinfoplist['System Image Info'].get('chunklistid'):
                     del installinfoplist['System Image Info']['chunklistid']
                 if installinfoplist['System Image Info'].get('chunklistURL'):
                     del installinfoplist['System Image Info']['chunklistURL']
-                plistlib.writePlist(installinfoplist, os.path.join(nbimount, 'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallInfo.plist'))
+                plistlib.writePlist(installinfoplist, os.path.join(nbimount,
+                                                                   'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallInfo.plist'))
 
         # We're done, unmount the outer NBI DMG.
         unmountdmg(nbimount)
@@ -1091,20 +1116,26 @@ isSierra = False
 isHighSierra = False
 
 if LooseVersion(_get_mac_ver()) >= "10.13":
-    BUILDEXECPATH = ('/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+    BUILDEXECPATH = (
+    '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
     isHighSierra = True
 elif LooseVersion(_get_mac_ver()) >= "10.12":
-    BUILDEXECPATH = ('/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+    BUILDEXECPATH = (
+    '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
     isSierra = True
 elif LooseVersion(_get_mac_ver()) >= "10.11":
-    BUILDEXECPATH = ('/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+    BUILDEXECPATH = (
+    '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
     isElCap = True
 elif LooseVersion(_get_mac_ver()) < "10.10":
-    BUILDEXECPATH = ('/System/Library/CoreServices/System Image Utility.app/Contents/Frameworks/SIUFoundation.framework/'
-                 'Versions/A/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+    BUILDEXECPATH = (
+    '/System/Library/CoreServices/System Image Utility.app/Contents/Frameworks/SIUFoundation.framework/'
+    'Versions/A/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
 else:
-    BUILDEXECPATH = ('/System/Library/CoreServices/Applications/System Image Utility.app/Contents/Frameworks/SIUFoundation.framework/'
-                 'Versions/A/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+    BUILDEXECPATH = (
+    '/System/Library/CoreServices/Applications/System Image Utility.app/Contents/Frameworks/SIUFoundation.framework/'
+    'Versions/A/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources')
+
 
 def main():
     """Main routine"""
@@ -1356,6 +1387,7 @@ def main():
         print("-------------------------------------------------------------------------")
         print 'No modifications will be made...'
         print 'Done.'
+
 
 if __name__ == '__main__':
     main()
