@@ -63,6 +63,8 @@
 # * [--add-ruby][-r] Add the Ruby framework and libraries to the NBI
 #   in order to support Ruby-based applications at runtime
 #
+# * [--vnc-password] *Optional* Enable VNC connections using the password given.
+#
 # To invoke AutoNBI in interactive mode:
 #   ./AutoNBI -s /Applications -d /Users/admin/BuildRoot -n Mavericks
 #
@@ -81,6 +83,7 @@ import subprocess
 import plistlib
 import optparse
 import shutil
+import binascii
 from distutils.version import LooseVersion
 from distutils.spawn import find_executable
 from ctypes import CDLL, Structure, c_void_p, c_size_t, c_uint, c_uint32, c_uint64, create_string_buffer, addressof, \
@@ -450,6 +453,32 @@ def prepworkdir(workdir):
         plistlib.writePlist(enterprisedict, os.path.join(workdir, '.SIUSettings'))
 
 
+def vnc_password(password, secret='1734516E8BA8C5E2FF1C39567390ADCA'):
+    """
+    Generate a VNC password by XORing a string with the fixed VNC string.
+
+    :param password: The plain password to encode
+    :param secret: The XOR string (defaults to apple's VNC string)
+
+    :returns string: The encoded password
+    """
+    if not password:
+        password = ''
+
+    password = binascii.hexlify(password)
+
+    xor_list = [int(h + l, 16) for (h, l) in zip(secret[0::2], secret[1::2])]
+    value_list = [int(h + l, 16) for (h, l) in zip(password[0::2], password[1::2])]
+
+    def reduce_xor(memo, c):
+        """reduce by XORing and substituting with NUL when out of bounds"""
+        v = value_list.pop(0) if len(value_list) > 0 else 0
+        return memo + chr(c ^ v)
+
+    result = reduce(reduce_xor, xor_list, '')
+    return result
+
+
 # Example usage of the function:
 # decompress('PayloadJava.cpio.xz', 'PayloadJava.cpio')
 # Decompresses a xz compressed file from the first input file path to the second output file path
@@ -585,13 +614,14 @@ class processNBI(object):
         created by createnbi()"""
 
     # Don't think we need this.
-    def __init__(self, customfolder=None, enablepython=False, enableruby=False, utilplist=False):
+    def __init__(self, customfolder=None, enablepython=False, enableruby=False, utilplist=False, vncpassword=None):
         super(processNBI, self).__init__()
         self.customfolder = customfolder
         self.enablepython = enablepython
         self.enableruby = enableruby
         self.utilplist = utilplist
         self.hdiutil = '/usr/bin/hdiutil'
+        self.vncpassword = vncpassword
 
     # Make the provided NetInstall.dmg r/w by mounting it with a shadow file
     def makerw(self, netinstallpath):
@@ -852,7 +882,7 @@ class processNBI(object):
                         }
         # Set 'modifybasesystem' if any frameworks are to be added, we're building
         #   an ElCap NBI or if we're adding a custom Utilites plist
-        modifybasesystem = (len(addframeworks) > 0 or isElCap or isSierra or isHighSierra or self.utilplist)
+        modifybasesystem = (len(addframeworks) > 0 or isElCap or isSierra or isHighSierra or self.utilplist or self.vncpassword)
 
         # If we need to make modifications to BaseSystem.dmg we mount it r/w
         if modifybasesystem:
@@ -1047,6 +1077,15 @@ class processNBI(object):
             except:
                 print("Failed to add custom Utilites plist from %s" % self.utilplist)
 
+        if self.vncpassword:
+            print("-------------------------------------------------------------------------")
+            print("Setting VNC password")
+            try:
+                with open(os.path.join(basesystemmountpoint, 'Library/Preferences/com.apple.VNCSettings.txt'), 'wb') as fd:
+                    fd.write(vnc_password(self.vncpassword))
+            except:
+                print("Failed to set VNC password")
+
         if modifybasesystem and basesystemmountpoint:
 
             # Done adding frameworks to BaseSystem, unmount and convert
@@ -1156,6 +1195,7 @@ def main():
              '                   [--type]\n'
              '                   [--add-python/-p]\n'
              '                   [--add-ruby/-r]\n'
+             '                   [--vnc-password] <password>\n'
              '                   [--utilities-plist]\n\n'
              '    %prog creates an OS X 10.7, 10.8, 10.9, 10.10, 10.11 or 10.12\n'
              '    NetInstall NBI ready for use with a NetBoot server.\n\n'
@@ -1220,6 +1260,8 @@ def main():
                            'defined multiple times. WARNING: This will enable ONLY the listed '
                            'System IDs. Systems not explicitly marked as enabled will not be '
                            'able to boot from this NBI.')
+    parser.add_option('--vnc-password', dest='vncpassword',
+                      help='Optional. Enable and set the VNC password to the given password.')
 
     # Parse the provided options
     options, arguments = parser.parse_args()
@@ -1263,10 +1305,12 @@ def main():
     if options.sysidenabled:
         sysidenabled = options.sysidenabled
         print('Enabling System IDs: %s' % sysidenabled)
+    if options.vncpassword:
+        print('Setting a VNC password')
 
     # Set 'modifydmg' if any of 'addcustom', 'addpython' or 'addruby' are true
     addcustom = len(customfolder) > 0
-    modifynbi = (addcustom or addpython or addruby or isElCap or isSierra or isHighSierra)
+    modifynbi = (addcustom or addpython or addruby or isElCap or isSierra or isHighSierra or options.vncpassword)
 
     # Spin up a tmp dir for mounting
     TMPDIR = tempfile.mkdtemp(dir=TMPDIR)
