@@ -52,8 +52,13 @@ class BuildEnvironment(object):
         return cls(version)
 
 
-
 class InstallSource(object):
+    """InstallSource describes an installation source such as:
+
+    - App Store installer .app bundle.
+    - Recovery partition.
+    - Existing NetInstall .nbi bundle (if modifying an existing build).
+    """
     INSTALLER_TYPE_ESD = 'esd'
     INSTALLER_TYPE_RECOVERY = 'recovery'
     INSTALLER_TYPE_NETINSTALL = 'netinstall'
@@ -62,13 +67,26 @@ class InstallSource(object):
         self._path = installer_path
         self._type = installer_type
 
-        if self._type == InstallSource.INSTALLER_TYPE_ESD or self._type == InstallSource.INSTALLER_TYPE_NETINSTALL:
-            self._dmg = Dmg(installer_path)
+        if self._type == InstallSource.INSTALLER_TYPE_ESD:
+            self._esd_source = os.path.join(self._path, 'Contents', 'SharedSupport', 'InstallESD.dmg')
+            self._dmg = Dmg(self._esd_source)
+        elif self._type == InstallSource.INSTALLER_TYPE_NETINSTALL:
+            self._esd_source = None
+            self._dmg = Dmg(self._path)
         else:
+            self._esd_source = None
             self._dmg = None
 
     @property
     def path(self):
+        """Path refers to the filesystem path of:
+
+        - The .app installer bundle (see _esd_source for the path to InstallESD.dmg when using High Sierra)
+        - The .nbi netinstall bundle.
+        - The mounted recovery partition.
+
+        :return str: The path to the installer.
+        """
         return self._path
 
     @property
@@ -133,7 +151,7 @@ class InstallSource(object):
             elif installer_path.endswith('.app'):
                 install_esd_path = os.path.join(installer_path, 'Contents/SharedSupport/InstallESD.dmg')
                 if os.path.exists(install_esd_path):
-                    return cls(install_esd_path, 'esd')
+                    return cls(installer_path, 'esd')
                 else:
                     raise IOError('Unable to locate InstallESD.dmg in {} - exiting.'.format(installer_path))
             else:
@@ -149,7 +167,6 @@ class InstallSource(object):
         else:
             raise IOError('Source is neither an installer app or InstallESD.dmg.')
 
-
     def version_info(self, is_high_sierra=False):
         """"getosversioninfo will attempt to retrieve the OS X version and build
             from the given mount point by reading /S/L/CS/SystemVersion.plist
@@ -158,7 +175,7 @@ class InstallSource(object):
         assert self.dmg.mounted
 
         if is_high_sierra:
-            basesystem_path = os.path.join(self.dmg_mount_point, 'Contents/SharedSupport')
+            basesystem_path = os.path.join(self.path, 'Contents/SharedSupport')
         else:
             basesystem_path = self.dmg_mount_point
 
@@ -182,16 +199,14 @@ class InstallSource(object):
             version_info = plistlib.readPlist(system_version_plist)
 
         # Got errors?
-        except (ExpatError, IOError), err:
-            unmountdmg(basesystemmountpoint)
-            unmountdmg(mountpoint)
-            fail('Could not read %s: %s' % (system_version_plist, err))
+        except IOError, err:
+            basesystem.unmount()
+            raise IOError('Could not read %s: %s' % (system_version_plist, err))
 
         # Done, unmount BaseSystem.dmg
         finally:
             basesystem.unmount()
 
-
         # Return the version and build as found in the parsed plist
         return version_info.get('ProductUserVisibleVersion'), \
-               version_info.get('ProductBuildVersion'), mountpoint
+               version_info.get('ProductBuildVersion'), basesystem_mount_point

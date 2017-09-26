@@ -76,22 +76,19 @@
 
 import os
 import sys
-import tempfile
-
+import logging
 import distutils.core
+import tempfile
 import subprocess
 import plistlib
 import argparse
 import shutil
 import binascii
-from distutils.version import LooseVersion
 from distutils.spawn import find_executable
 from ctypes import CDLL, Structure, c_void_p, c_size_t, c_uint, c_uint32, c_uint64, create_string_buffer, addressof, \
     sizeof, byref
 import objc
-
-sys.path.append("/usr/local/munki/munkilib")
-import FoundationPlist
+from distutils.version import LooseVersion
 from xml.parsers.expat import ExpatError
 
 
@@ -114,54 +111,6 @@ def cleanUp():
     """Cleanup our TMPDIR"""
     if TMPDIR:
         shutil.rmtree(TMPDIR, ignore_errors=True)
-
-
-def fail(errmsg=''):
-    """Print any error message to stderr,
-    clean up install data, and exit"""
-    if errmsg:
-        print >> sys.stderr, errmsg
-    cleanUp()
-    exit(1)
-
-
-def mountdmg(dmgpath, use_shadow=False):
-    """
-    Attempts to mount the dmg at dmgpath
-    and returns a list of mountpoints
-    If use_shadow is true, mount image with shadow file
-    """
-    mountpoints = []
-    dmgname = os.path.basename(dmgpath)
-    cmd = ['/usr/bin/hdiutil', 'attach', dmgpath,
-           '-mountRandom', TMPDIR, '-nobrowse', '-plist',
-           '-owners', 'on']
-    if use_shadow:
-        shadowname = dmgname + '.shadow'
-        shadowroot = os.path.dirname(dmgpath)
-        shadowpath = os.path.join(shadowroot, shadowname)
-        cmd.extend(['-shadow', shadowpath])
-    else:
-        shadowpath = None
-    proc = subprocess.Popen(cmd, bufsize=-1,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    (pliststr, err) = proc.communicate()
-    if proc.returncode:
-        print >> sys.stderr, 'Error: "%s" while mounting %s.' % (err, dmgname)
-    if pliststr:
-        plist = plistlib.readPlistFromString(pliststr)
-        for entity in plist['system-entities']:
-            if 'mount-point' in entity:
-                mountpoints.append(entity['mount-point'])
-
-    return mountpoints, shadowpath
-
-
-def unmountdmg(mountpoint):
-    """
-    Unmounts the dmg at mountpoint
-    """
-    print('na')
 
 
 # Above code from COSXIP by Greg Neagle
@@ -382,44 +331,6 @@ def decompress(infile, outfile):
             # Implementation of pretty English error messages is an exercise left to the reader ;)
             raise Exception("Error: return code of value %s - naive decoder couldn't handle input!" % (result))
 
-
-HDIUTIL = '/usr/bin/hdiutil'
-# hdiutil commands
-attach_dmg = lambda shadow_file, attach_source, tmp: [
-    HDIUTIL, 'attach',
-    '-shadow', shadow_file,
-    '-mountRandom', tmp,
-    '-nobrowse', '-plist', '-owners', 'on',
-    attach_source]
-detach_dmg = lambda mountpoint: [HDIUTIL, 'detach', '-force', mountpoint]
-
-
-def run(cmd, cwd=None):
-    """
-    Run a command using subprocess.Popen
-
-    :param cmd: The command to run
-    :param cwd: The optional working directory
-    :return: the content of stdout
-    """
-    if cwd:
-        proc = subprocess.Popen(cmd, bufsize=-1,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd,
-                                shell=True)
-        (result, err) = proc.communicate()
-    else:
-        proc = subprocess.Popen(cmd, bufsize=-1,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (result, err) = proc.communicate()
-
-    if proc.returncode:
-        print >> sys.stderr, 'Error "%s" while running command %s' % (err, cmd)
-
-    return result
-
-
-
-
 class processNBI(object):
     """The processNBI class provides the makerw(), modify() and close()
         functions. All functions serve to make modifications to an NBI
@@ -434,19 +345,6 @@ class processNBI(object):
         self.utilplist = utilplist
         self.hdiutil = '/usr/bin/hdiutil'
         self.vncpassword = vncpassword
-
-    # Make the provided NetInstall.dmg r/w by mounting it with a shadow file
-    def makerw(self, netinstallpath):
-        # Call mountdmg() with the use_shadow option set to True
-        nbimount, nbishadow = mountdmg(netinstallpath, use_shadow=True)
-
-        # Send the mountpoint and shadow file back to the caller
-        return nbimount[0], nbishadow
-
-    # Handle the addition of system frameworks like Python and Ruby using the
-    #   OS X installer source
-    # def enableframeworks(self, source, shadow):
-
 
 
     def dmgresize(self, resize_source, shadow_file=None, size=None):
@@ -615,38 +513,6 @@ class processNBI(object):
         if self.enableruby:
             addframeworks.append('ruby')
 
-        # Define the needed source PKGs for our frameworks
-        if isHighSierra:
-            # In High Sierra pretty much everything is in Core. New name. Same contents.
-            # We also need to add libssl as it's no longer standard.
-            payloads = {'python': {'sourcepayloads': ['Core'],
-                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libcrypto*\" \"*libffi.dylib*\" \"*libexpat*\"'},
-                        'ruby': {'sourcepayloads': ['Core'],
-                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                        }
-
-        elif isSierra:
-            # In Sierra pretty much everything is in Essentials.
-            # We also need to add libssl as it's no longer standard.
-            payloads = {'python': {'sourcepayloads': ['Essentials'],
-                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\" \"*libffi.dylib*\" \"*libexpat*\"'},
-                        'ruby': {'sourcepayloads': ['Essentials'],
-                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                        }
-        elif isElCap:
-            # In ElCap pretty much everything is in Essentials.
-            # We also need to add libssl as it's no longer standard.
-            payloads = {'python': {'sourcepayloads': ['Essentials'],
-                                   'regex': '\"*Py*\" \"*py*\" \"*libssl*\"'},
-                        'ruby': {'sourcepayloads': ['Essentials'],
-                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"  \"*libssl*\"'}
-                        }
-        else:
-            payloads = {'python': {'sourcepayloads': ['BSD'],
-                                   'regex': '\"*Py*\" \"*py*\"'},
-                        'ruby': {'sourcepayloads': ['BSD', 'Essentials'],
-                                 'regex': '\"*ruby*\" \"*lib*ruby*\" \"*Ruby.framework*\"'}
-                        }
         # Set 'modifybasesystem' if any frameworks are to be added, we're building
         #   an ElCap NBI or if we're adding a custom Utilites plist
         # modifybasesystem = (
@@ -680,170 +546,6 @@ class processNBI(object):
             for entity in basesystemplist['system-entities']:
                 if 'mount-point' in entity:
                     basesystemmountpoint = entity['mount-point']
-
-        # OS X 10.11 El Capitan triggers an Installer Progress app which causes
-        #   custom installer workflows using 'Packages/Extras' to fail so
-        #   we need to nix it. Thanks, Apple.
-        if isSierra or isHighSierra:
-            rcdotinstallpath = os.path.join(basesystemmountpoint, 'private/etc/rc.install')
-            rcdotinstallro = open(rcdotinstallpath, "r")
-            rcdotinstalllines = rcdotinstallro.readlines()
-            rcdotinstallro.close()
-            rcdotinstallw = open(rcdotinstallpath, "w")
-
-            # The binary changed to launchprogresswindow for Sierra, still killing it.
-            # Sierra also really wants to launch the Language Chooser which kicks off various install methods.
-            # This can mess with some third party imaging tools (Imagr) so we simply change it to 'echo'
-            #   so it simply echoes the args Language Chooser would be called with instead of launching LC, and nothing else.
-            for line in rcdotinstalllines:
-                # Remove launchprogresswindow
-                if line.rstrip() != "/System/Installation/CDIS/launchprogresswindow &":
-                    # Rewrite $LAUNCH as /bin/echo
-                    if line.rstrip() == "LAUNCH=\"/System/Library/CoreServices/Language Chooser.app/Contents/MacOS/Language Chooser\"":
-                        rcdotinstallw.write("LAUNCH=/bin/echo")
-                        # Add back ElCap code to source system imaging extras files
-                        rcdotinstallw.write(
-                            "\nif [ -x /System/Installation/Packages/Extras/rc.imaging ]; then\n\t/System/Installation/Packages/Extras/rc.imaging\nfi")
-                    else:
-                        rcdotinstallw.write(line)
-
-            rcdotinstallw.close()
-
-        if isElCap:
-            rcdotinstallpath = os.path.join(basesystemmountpoint, 'private/etc/rc.install')
-            rcdotinstallro = open(rcdotinstallpath, "r")
-            rcdotinstalllines = rcdotinstallro.readlines()
-            rcdotinstallro.close()
-            rcdotinstallw = open(rcdotinstallpath, "w")
-            for line in rcdotinstalllines:
-                if line.rstrip() != "/System/Library/CoreServices/Installer\ Progress.app/Contents/MacOS/Installer\ Progress &":
-                    rcdotinstallw.write(line)
-            rcdotinstallw.close()
-
-        if isElCap or isSierra or isHighSierra:
-            # Reports of slow NetBoot speeds with 10.11+ have lead others to
-            #   remove various launch items that seem to cause this. Remove some
-            #   of those as a stab at speeding things back up.
-            baseldpath = os.path.join(basesystemmountpoint, 'System/Library/LaunchDaemons')
-            launchdaemonstoremove = ['com.apple.locationd.plist',
-                                     'com.apple.lsd.plist',
-                                     'com.apple.tccd.system.plist',
-                                     'com.apple.ocspd.plist',
-                                     'com.apple.InstallerProgress.plist']
-
-            for ld in launchdaemonstoremove:
-                ldfullpath = os.path.join(baseldpath, ld)
-                if os.path.exists(ldfullpath):
-                    os.unlink(ldfullpath)
-        # Handle any custom content to be added, customfolder has a value
-        if self.customfolder:
-            print("-------------------------------------------------------------------------")
-            print "Modifying NetBoot volume at %s" % nbimount
-
-            # Sets up which directory to process. This is a simple version until
-            # we implement something more full-fledged, based on a config file
-            # or other user-specified source of modifications.
-            processdir = os.path.join(nbimount, ''.join(self.customfolder.split('/')[-1:]))
-
-            if isHighSierra:
-                processdir = os.path.join(basesystemmountpoint, 'System/Installation',
-                                          ''.join(self.customfolder.split('/')[-1:]))
-
-            # Remove folder being modified - distutils appears to have the easiest
-            # method to recursively delete a folder. Same with recursively copying
-            # back its replacement.
-            print('About to process ' + processdir + ' for replacement...')
-            if os.path.lexists(processdir):
-                if os.path.isdir(processdir):
-                    print('Removing directory %s' % processdir)
-                    distutils.dir_util.remove_tree(processdir)
-                # This may be a symlink or other non-dir instead, so double-tap just in case
-                else:
-                    print('Removing file or symlink %s' % processdir)
-                    os.unlink(processdir)
-
-            # Copy over the custom folder contents. If the folder didn't exists
-            # we can skip the above removal and get straight to copying.
-            # os.mkdir(processdir)
-            print('Copying ' + self.customfolder + ' to ' + processdir + '...')
-            distutils.dir_util.copy_tree(self.customfolder, processdir)
-            print('Done copying ' + self.customfolder + ' to ' + processdir + '...')
-
-            # High Sierra 10.13 contains the InstallESD.dmg as part of the installer app, remove it to free up space
-            if isHighSierra:
-                if os.path.exists(os.path.join(nbimount,
-                                               'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg')):
-                    os.unlink(os.path.join(nbimount,
-                                           'Install macOS High Sierra Beta.app/Contents/SharedSupport/InstallESD.dmg'))
-
-        # Is Python or Ruby being added? If so, do the work.
-        if addframeworks:
-
-            # Create an empty list to record cached Payload resources
-            havepayload = []
-
-            # Loop through the frameworks we've been asked to include
-            for framework in addframeworks:
-
-                # Get the cpio glob pattern/regex to extract the framework
-                regex = payloads[framework]['regex']
-                print("-------------------------------------------------------------------------")
-                print("Adding %s framework from %s to NBI at %s" % (framework.capitalize(), installersource, nbimount))
-
-                # Loop through all possible source payloads for this framework
-                for payload in payloads[framework]['sourcepayloads']:
-
-                    payloadsource = os.path.join(TMPDIR, 'Payload')
-                    # os.rename(payloadsource, payloadsource + '-' + payload)
-                    # payloadsource = payloadsource + '-' + payload
-                    cpio_archive = payloadsource + '-' + payload + '.cpio.xz'
-                    xar_source = os.path.join(installersource, 'Packages', payload + '.pkg')
-
-                    print("Cached payloads: %s" % havepayload)
-
-                    # Check whether we already have this Payload from a previous run
-                    if cpio_archive not in havepayload:
-
-                        print("-------------------------------------------------------------------------")
-                        print("No cache, extracting %s" % xar_source)
-
-                        # Extract Payload(s) from desired OS X installer package
-                        sysplatform = sys.platform
-                        self.runcmd(self.xarextract(xar_source, sysplatform))
-
-                        # Determine the Payload file type using 'file'
-                        payloadtype = self.runcmd(self.getfiletype(payloadsource)).split(': ')[1]
-
-                        print("Processing payloadsource %s" % payloadsource)
-                        result = self.processframeworkpayload(payloadsource, payloadtype, cpio_archive)
-
-                        # Log that we have this cpio_archive in case we need it later
-                        if cpio_archive not in havepayload:
-                            # print("Adding cpio_archive %s to havepayload" % cpio_archive)
-                            havepayload.append(cpio_archive)
-
-                    # Extract our needed framework bits from CPIO arch
-                    #   using shell globbing pattern(s)
-                    print("-------------------------------------------------------------------------")
-                    print("Processing cpio_archive %s" % cpio_archive)
-                    self.runcmd(self.cpioextract(cpio_archive, regex),
-                                cwd=basesystemmountpoint)
-
-            for cpio_archive in havepayload:
-                print("-------------------------------------------------------------------------")
-                print("Removing cached Payload %s" % cpio_archive)
-                if os.path.exists(cpio_archive):
-                    os.remove(cpio_archive)
-
-        # Add custom Utilities.plist if passed as an argument
-        if self.utilplist:
-            print("-------------------------------------------------------------------------")
-            print("Adding custom Utilities.plist from %s" % self.utilplist)
-            try:
-                shutil.copyfile(os.path.abspath(self.utilplist), os.path.join(basesystemmountpoint,
-                                                                              'System/Installation/CDIS/OS X Utilities.app/Contents/Resources/Utilities.plist'))
-            except:
-                print("Failed to add custom Utilites plist from %s" % self.utilplist)
 
         if self.vncpassword:
             print("-------------------------------------------------------------------------")
@@ -922,10 +624,10 @@ sysidenabled = []
 
 
 def main():
-    """Main routine"""
-
-    global TMPDIR
-    global sysidenabled
+    logger = logging.getLogger('AutoNBI')
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    logger.addHandler(ch)
 
     parser = argparse.ArgumentParser(description='AutoNBI')
 
@@ -953,94 +655,126 @@ def main():
     parser.add_argument('--default', action='store_true', default=False,
                         help='Optional. Marks the NBI as the default for all clients. Only one default should be '
                              'enabled on any given NetBoot/NetInstall server.', dest='isdefault')
-    parser.add_argument('--index', default=5000, dest='nbiindex', type='int',
+    parser.add_argument('--index', default=5000, dest='nbiindex', type=int,
                         help='Optional. Set a custom Index for the NBI. Default is 5000.')
     parser.add_argument('--type', default='NFS', dest='nbitype',
                         help='Optional. Set a custom Type for the NBI. HTTP or NFS. Default is NFS.')
-    parser.add_argument('--sysid-enable', dest='sysidenabled', action='append', type='str',
+    parser.add_argument('--sysid-enable', dest='sysidenabled', action='append', type=str,
                         help='Optional. Whitelist a given System ID (\'MacBookPro10,1\') Can be '
                              'defined multiple times. WARNING: This will enable ONLY the listed '
                              'System IDs. Systems not explicitly marked as enabled will not be '
                              'able to boot from this NBI.')
+    parser.add_argument('--verbose', '-v', action='count', default=0,
+                        help='Increase verbosity level')
     parser.add_argument('--vnc-password', dest='vncpassword',
                         help='Optional. Enable and set the VNC password to the given password.')
 
     # Parse the provided options
     arguments = parser.parse_args()
 
+    if arguments.verbose > 0:  # TODO: this sucks
+        ch.setLevel(logging.DEBUG)
+        logger.setLevel(logging.DEBUG)
+        logger.debug('Verbose logging enabled')
+
     # Are we root?
     if os.getuid() != 0:
-        parser.print_usage()
-        print >> sys.stderr, 'This tool requires sudo or root privileges.'
+        logger.error('This tool requires sudo or root privileges.')
         exit(-1)
 
     if not os.path.exists(arguments.source):
-        print >> sys.stderr, 'The given source at %s does not exist.' % arguments.source
+        logger.error('The given source at %s does not exist.', arguments.source)
         exit(-1)
 
     from environment import BuildEnvironment
     buildenv = BuildEnvironment.from_host()
 
-    # Set 'modifydmg' if any of 'addcustom', 'addpython' or 'addruby' are true
-    # addcustom = len(customfolder) > 0
-    # modifynbi = (addcustom or addpython or addruby or isElCap or isSierra or isHighSierra or options.vncpassword)
-
-    # Spin up a tmp dir for mounting
-    TMPDIR = tempfile.mkdtemp(dir=TMPDIR)
-
-    # Now we start a typical run of the tool, first locate one or more
-    #   installer app candidates
     try:
         from environment import InstallSource
+        logger.debug('Attempting to locate a valid installer at location: %s', arguments.source)
         source = InstallSource.from_path(arguments.source)
     except IOError as e:
-        print(e.message)
+        logger.error('Error locating installer', exc_info=e)
         sys.exit(1)
 
     if source.is_netinstall or source.is_esd:
         # If the destination path isn't absolute, we make it so to prevent errors
         if not arguments.destination.startswith('/'):
             destination = os.path.abspath(arguments.destination)
+        else:
+            destination = arguments.destination
 
         # Prep the build root - create it if it's not there
         if not os.path.exists(arguments.destination):
             os.mkdir(arguments.destination)
 
-        print 'Mounting ' + source.path
+        logger.debug('Mounting %s', source.path)
+
         source.dmg.mount()
-        mount = source.dmg_mount_point
+        osversion, osbuild, _ = source.version_info(is_high_sierra=buildenv.is_high_sierra)
 
-        if buildenv.is_high_sierra:
-            osversion, osbuild, unused = getosversioninfo(os.path.join(mount, 'Contents/SharedSupport'))
-        else:
-            osversion, osbuild, unused = getosversioninfo(mount)
-
-        if LooseVersion(buildenv.version_major) < '10.12':
+        if LooseVersion(osversion) < '10.12':
             description = "OS X %s - %s" % (osversion, osbuild)
         else:
             description = "macOS %s - %s" % (osversion, osbuild)
 
-        # Prep our build root for NBI creation
-        # print 'Prepping ' + destination + ' with source mounted at ' + mount
-        # prepworkdir(destination)
+        source.dmg.unmount()
 
         # Now move on to the actual NBI creation
-        # print 'Creating NBI at ' + destination
+        logger.info('Creating NBI at: %s', destination)
+
         # print 'Base NBI Operating System is ' + osversion
-        # createnbi(destination, description, osversion, name, enablenbi, nbiindex, nbitype, isdefault, mount, arguments.source)
-        from builder import NBIBuilder
-        builder = NBIBuilder(buildenv, mount, arguments.destination).description(description)
+        from builder import NBIBuilder, NBImageInfoBuilder
+        builder = NBIBuilder(buildenv, source, destination)
+        nbi_path = builder.build(arguments.name)
+        logger.info('Created .nbi at %s', nbi_path)
+
+        from hdiutil import NBI, Dmg
+        nbi = NBI(nbi_path)
+
+        # Build NBImageInfo.plist
+        info = NBImageInfoBuilder.from_nbi(nbi_path)
 
         if arguments.enablenbi:
-            builder = builder.enable()
+            logger.debug('NBI will be enabled')
+            info = info.enable()
 
         if arguments.nbiindex:
-            builder = builder.index(arguments.nbiindex)
+            logger.debug('NBI index will be %d', arguments.nbiindex)
+            info = info.index(arguments.nbiindex)
 
         if arguments.isdefault:
-            builder = builder.default()
+            logger.debug('NBI is the default')
+            info = info.default()
 
-        builder.build()
+        info = info.description(description)
+        plist_value = info.build()
+        logger.info('Writing out NBImageInfo.plist')
+        with open(os.path.join(nbi_path, 'NBImageInfo.plist'), 'w+') as fd:
+            fd.write(plist_value)
+
+        with nbi.mounted(writable=True) as mount_points:
+            logger.info("NBI mounted at %s", ','.join(mount_points))
+
+            if arguments.folder and os.path.isdir(arguments.folder):
+                customfolder = os.path.abspath(arguments.folder)
+
+            # TODO: detect whether BaseSystem even needs to be modified
+            if buildenv.is_high_sierra:
+                base_system_dmg_path = os.path.join(mount_points[0], 'Install macOS High Sierra.app', 'Contents',
+                                                    'SharedSupport', 'BaseSystem.dmg')
+            else:
+                base_system_dmg_path = os.path.join(mount_points[0], 'BaseSystem.dmg')
+
+            base_system_shadow_path = os.path.join(tempfile.mkdtemp(), 'BaseSystem.shadow')
+            base_system_dmg = Dmg(base_system_dmg_path)
+            base_system_dmg.resize(base_system_shadow_path, size='8G')
+
+            with base_system_dmg.mounted(writable=True) as base_mounts:
+                logger.info("BaseSystem mounted at %s", ','.join(base_mounts))
+
+
+
 
     # Make our modifications if any were provided from the CLI
     # if modifynbi:

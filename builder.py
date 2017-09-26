@@ -3,9 +3,12 @@ import sys
 import plistlib
 import shutil
 import subprocess
+import logging
 
 sys.path.append("/usr/local/munki/munkilib")
 import FoundationPlist
+
+logger = logging.getLogger(__name__)
 
 
 class AutoNBIProcessError(BaseException):
@@ -36,6 +39,11 @@ class NBImageInfoBuilder(object):
     def from_platform_support(cls, platform_support_path):
         """Generate a new NBImageInfo builder instance, starting with supported system identifiers from a given
         PlatformSupport.plist.
+
+        NOTE: OS X versions prior to 10.11 list both SupportedModelProperties and
+            SupportedBoardIds - 10.11 only lists SupportedBoardIds. So we need to
+            check both and append to the list if missing. Basically appends any
+            model IDs found by looking up their board IDs to 'disabledsystemidentifiers'
 
         :param platform_support_path: Path to PlatformSupport.plist inside the .nbi eg. ``example.nbi/i386/PlatformSupport.plist``
         :returns: NBImageInfoBuilder seeded with platform support from plist.
@@ -118,13 +126,26 @@ class NBImageInfoBuilder(object):
         return self
 
     def build(self):
+        """
+        Write out a property list and return it.
+
+        :return:
+        """
         return FoundationPlist.writePlistToString(self._info)
 
 
 class NBIBuilder(object):
-    """The builder class for the NetInstall image."""
 
     def __init__(self, build_environment, source, workdir):
+        """The builder class for the NetInstall image.
+
+        Provides an interface for specifying .nbi build conditions.
+
+        :param build_environment: Instance of BuildEnvironment
+        :param source: Instance of InstallerSource from the passed in argument
+        :param workdir: The working directory (for temporary files)
+
+        """
         super(NBIBuilder, self).__init__()
         self._build_environment = build_environment
         self._source = source
@@ -167,7 +188,7 @@ class NBIBuilder(object):
         Build the NBI
 
         :param name: The NBI name to produce.
-        :return:
+        :return str: Path to the output .nbi bundle
         """
 
         if self._build_environment.is_high_sierra:
@@ -187,7 +208,7 @@ class NBIBuilder(object):
                            'dmgTarget': 'NetInstall',
                            'dmgVolName': name,
                            'destVolFSType': 'JHFS+',
-                           'installSource': self._source,
+                           'installSource': self._source.path,
                            'scriptsDebugKey': 'INFO',
                            'ownershipInfoKey': 'root:wheel'}
 
@@ -195,8 +216,11 @@ class NBIBuilder(object):
                                 stderr=subprocess.PIPE, env=createvariables)
 
         (unused, err) = proc.communicate()
+
         if proc.returncode:
             raise AutoNBIProcessError(err)
 
         self._cleanup_workdir(self._workdir)
+
+        return destpath
 
