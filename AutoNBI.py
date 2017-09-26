@@ -77,7 +77,7 @@
 import os
 import sys
 import tempfile
-import mimetypes
+
 import distutils.core
 import subprocess
 import plistlib
@@ -161,19 +161,7 @@ def unmountdmg(mountpoint):
     """
     Unmounts the dmg at mountpoint
     """
-    proc = subprocess.Popen(['/usr/bin/hdiutil', 'detach', mountpoint],
-                            bufsize=-1, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE)
-    (unused_output, err) = proc.communicate()
-    if proc.returncode:
-        print >> sys.stderr, 'Polite unmount failed: %s' % err
-        print >> sys.stderr, 'Attempting to force unmount %s' % mountpoint
-        # try forcing the unmount
-        retcode = subprocess.call(['/usr/bin/hdiutil', 'detach', '-force',
-                                   mountpoint])
-        print('Unmounting successful...')
-        if retcode:
-            print >> sys.stderr, 'Failed to unmount %s' % mountpoint
+    print('na')
 
 
 # Above code from COSXIP by Greg Neagle
@@ -201,89 +189,12 @@ def convertdmg(dmgpath, nbishadow):
     return dmgfinal + '.sparseimage'
 
 
-def getosversioninfo(mountpoint):
-    """"getosversioninfo will attempt to retrieve the OS X version and build
-        from the given mount point by reading /S/L/CS/SystemVersion.plist
-        Most of the code comes from COSXIP without changes."""
-
-    # Check for availability of BaseSystem.dmg
-    basesystem_dmg = os.path.join(mountpoint, 'BaseSystem.dmg')
-    if not os.path.isfile(basesystem_dmg):
-        unmountdmg(mountpoint)
-        fail('Missing BaseSystem.dmg in %s' % mountpoint)
-
-    # Mount BaseSystem.dmg
-    basesystemmountpoints, unused_shadowpath = mountdmg(basesystem_dmg)
-    basesystemmountpoint = basesystemmountpoints[0]
-
-    # Read SystemVersion.plist from the mounted BaseSystem.dmg
-    system_version_plist = os.path.join(
-        basesystemmountpoint,
-        'System/Library/CoreServices/SystemVersion.plist')
-    # Now parse the .plist file
-    try:
-        version_info = plistlib.readPlist(system_version_plist)
-
-    # Got errors?
-    except (ExpatError, IOError), err:
-        unmountdmg(basesystemmountpoint)
-        unmountdmg(mountpoint)
-        fail('Could not read %s: %s' % (system_version_plist, err))
-
-    # Done, unmount BaseSystem.dmg
-    else:
-        unmountdmg(basesystemmountpoint)
-
-    # Return the version and build as found in the parsed plist
-    return version_info.get('ProductUserVisibleVersion'), \
-           version_info.get('ProductBuildVersion'), mountpoint
 
 
 def buildplist(nbiindex, nbitype, nbidescription, nbiosversion, nbiname, nbienabled, isdefault, destdir=__file__):
     """buildplist takes a source, destination and name parameter that are used
         to create a valid plist for imagetool ingestion."""
-
-    # Read and parse PlatformSupport.plist which has a reasonably reliable list
-    #   of model IDs and board IDs supported by the OS X version being built
-
-    nbipath = os.path.join(destdir, nbiname + '.nbi')
-    platformsupport = FoundationPlist.readPlist(os.path.join(nbipath, 'i386', 'PlatformSupport.plist'))
-
-    # OS X versions prior to 10.11 list both SupportedModelProperties and
-    #   SupportedBoardIds - 10.11 only lists SupportedBoardIds. So we need to
-    #   check both and append to the list if missing. Basically appends any
-    #   model IDs found by looking up their board IDs to 'disabledsystemidentifiers'
-
-    disabledsystemidentifiers = platformsupport.get('SupportedModelProperties') or []
-    for boardid in platformsupport.get('SupportedBoardIds') or []:
-        # Call modelPropertiesForBoardIDs from the ServerInfo framework to
-        #   look up the model ID for this board ID.
-        for sysid in ServerInformation.ServerInformationComputerModelInfo.modelPropertiesForBoardIDs_([boardid]):
-            # If the returned model ID is not yet in 'disabledsystemidentifiers'
-            #   add it, but not if it's an unresolved 'Mac-*' board ID.
-            if sysid not in disabledsystemidentifiers and 'Mac-' not in sysid:
-                disabledsystemidentifiers.append(sysid)
-
-    nbimageinfo = {'IsInstall': True,
-                   'Index': nbiindex,
-                   'Kind': 1,
-                   'Description': nbidescription,
-                   'Language': 'Default',
-                   'IsEnabled': nbienabled,
-                   'SupportsDiskless': False,
-                   'RootPath': 'NetInstall.dmg',
-                   'EnabledSystemIdentifiers': sysidenabled,
-                   'BootFile': 'booter',
-                   'Architectures': ['i386'],
-                   'BackwardCompatible': False,
-                   'DisabledSystemIdentifiers': disabledsystemidentifiers,
-                   'Type': nbitype,
-                   'IsDefault': isdefault,
-                   'Name': nbiname,
-                   'osVersion': nbiosversion}
-
-    plistfile = os.path.join(nbipath, 'NBImageInfo.plist')
-    FoundationPlist.writePlist(nbimageinfo, plistfile)
+    print("write out NBImageInfo.plist")
 
 def pickinstaller(installers):
     """pickinstaller provides an interactive picker when more than one
@@ -507,385 +418,6 @@ def run(cmd, cwd=None):
     return result
 
 
-class BuildEnvironment(object):
-    BUILD_EXEC_PATHS = {
-        '10.13': '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources',
-        '10.12': '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources',
-        '10.11': '/System/Library/PrivateFrameworks/SIUFoundation.framework/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources',
-        '10.10': '/System/Library/CoreServices/System Image Utility.app/Contents/Frameworks/SIUFoundation.framework/Versions/A/XPCServices/com.apple.SIUAgent.xpc/Contents/Resources'
-    }
-
-    def __init__(self, version):
-        self._version = version
-        if LooseVersion(self._version) >= '10.13':
-            self._build_exec_path = BuildEnvironment.BUILD_EXEC_PATHS['10.13']
-            self._version_major = '10.13'
-        elif LooseVersion(self._version) >= '10.12':
-            self._build_exec_path = BuildEnvironment.BUILD_EXEC_PATHS['10.12']
-            self._version_major = '10.12'
-        elif LooseVersion(self._version) >= '10.11':
-            self._build_exec_path = BuildEnvironment.BUILD_EXEC_PATHS['10.11']
-            self._version_major = '10.11'
-        elif LooseVersion(self._version) <= '10.10':
-            self._build_exec_path = BuildEnvironment.BUILD_EXEC_PATHS['10.10']
-            self._version_major = '10.10'
-
-    @property
-    def build_exec_path(self):
-        return self._build_exec_path
-
-    @property
-    def version_major(self):
-        return self._version_major
-
-    @property
-    def is_high_sierra(self):
-        return self._version_major == '10.13'
-
-    @classmethod
-    def from_host(cls):
-        import subprocess
-        p = subprocess.Popen(['sw_vers', '-productVersion'], stdout=subprocess.PIPE)
-        stdout, stderr = p.communicate()
-        version = stdout.strip()
-
-        return cls(version)
-
-
-class Dmg(object):
-    HDIUTIL = '/usr/bin/hdiutil'
-
-    @property
-    def path(self):
-        """The path of this dmg."""
-        return self._path
-
-    @property
-    def mount_points(self):
-        """The mount point of this dmg, None if it is not mounted/attached."""
-        return self._mount_points
-
-    @property
-    def shadow(self):
-        """If the dmg is mounted with a shadow file, return that path."""
-        return self._shadow
-
-    def __init__(self, path):
-        super(Dmg, self).__init__()
-        self._path = path
-        self._mount_points = None
-        self._shadow = None
-
-    def mount(self, shadow=False):
-        command = [Dmg.HDIUTIL, 'attach', self.path,
-                   '-mountRandom', TMPDIR, '-nobrowse', '-plist',
-                   '-owners', 'on']
-
-        if shadow:
-            shadow_name = os.path.basename(self.path) + '.shadow'
-            shadow_root = os.path.dirname(self.path)
-            shadow_path = os.path.join(shadow_root, shadow_name)
-            command.extend(['-shadow', shadow_path])
-
-        proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (pliststr, err) = proc.communicate()
-        if proc.returncode:
-            raise IOError('Error: "{}" while mounting {}'.format(err, self.path))
-
-        plist = plistlib.readPlistFromString(pliststr)
-
-        self._mount_points = [entity['mount-point'] for entity in plist['system-entities'] if 'mount-point' in entity]
-
-    def convert(self, fmt, output):
-        """Convert a DMG with or without a shadow file to the specified format.
-
-        :param fmt: The -format parameter to hdiutil.
-        :param output: The output path of the converted dmg.
-        :return Dmg: The instance of the output dmg.
-        """
-        if self.shadow:
-            command = [Dmg.HDIUTIL, 'convert',
-                       '-format', fmt,
-                       '-o', output,
-                       '-shadow', self.shadow,
-                       self.path]
-        else:
-            command = [Dmg.HDIUTIL, 'convert',
-                       '-format', fmt,
-                       '-o', output,
-                       self.path]
-
-        run(command)
-        return Dmg(output)
-
-
-class AutoNBIProcessError(BaseException):
-    pass
-
-
-class NBImageInfoBuilder(object):
-    def __init__(self):
-        self._info = {
-            'IsInstall': True,
-            'Index': 6667,
-            'Description': 'NetBoot Image',
-            'Kind': 1,
-            'Language': 'Default',
-            'SupportsDiskless': False,
-            'RootPath': 'NetInstall.dmg',
-            'BootFile': 'booter',
-            'Architectures': ['i386'],
-            'BackwardCompatible': False,
-            'IsEnabled': False,
-            'IsDefault': False,
-        }
-
-    def index(self, idx):
-        """
-        Set the NetBoot image index (default is 6667)
-
-        :param idx: The index number of the netboot image.
-        :return: NBImageInfoBuilder
-        """
-        self._info['Index'] = idx
-        return self
-
-    def description(self, desc):
-        """
-        Set the NetBoot image description (default is 'NetBoot Image')
-
-        :param desc: The description
-        :return: NBImageInfoBuilder
-        """
-        self._info['Description'] = desc
-        return self
-
-    def enabled(self):
-        """
-        Enable the NetBoot Image
-
-        :return: NBImageInfoBuilder
-        """
-        self._info['IsEnabled'] = True
-        return self
-
-    def default(self):
-        """
-        Make the NetBoot Image the default
-
-        :return: NBImageInfoBuilder
-        """
-        self._info['IsDefault'] = True
-        return self
-
-    def enable_identifiers(self, identifiers):
-        """
-        Enable a list of system identifiers
-
-        :param identifiers: A single identifier or a list of identifiers.
-        :return: NBImageInfoBuilder
-        """
-        if isinstance(identifiers, list):
-            self._info['EnabledSystemIdentifiers'] = identifiers
-        else:
-            self._info['EnabledSystemIdentifiers'] = [identifiers]
-
-        return self
-
-    def disable_identifiers(self, identifiers):
-        """
-        Disable a list of system identifiers
-
-        :param identifiers: A single identifier or a list of identifiers.
-        :return: NBImageInfoBuilder
-        """
-        if isinstance(identifiers, list):
-            self._info['DisabledSystemIdentifiers'] = identifiers
-        else:
-            self._info['DisabledSystemIdentifiers'] = [identifiers]
-
-        return self
-
-    def build(self):
-        return FoundationPlist.writePlistToString(self._info)
-
-
-class NBIBuilder(object):
-    """The builder class for the NetInstall image."""
-
-    def __init__(self, build_environment, source, workdir):
-        super(NBIBuilder, self).__init__()
-        self._build_environment = build_environment
-        self._source = source
-        self._workdir = workdir
-        self._enable_python = False
-        self._enable_ruby = False
-        self._custom_folder = None
-
-    def enable_python(self):
-        self._enable_python = True
-        return self
-
-    def enable_ruby(self):
-        self._enable_ruby = True
-        return self
-
-    def custom_folder(self, folder):
-        self._custom_folder = folder
-        return self
-
-    def _prepare_workdir(self, workdir, siu_settings=None):
-        """Copies in the required Apple-provided createCommon.sh and also creates
-        an empty file named createVariables.sh. We actually pass the variables
-        this file might contain using environment variables but it is expected
-        to be present so we fake out Apple's createNetInstall.sh script."""
-        commonsource = os.path.join(self._build_environment.build_exec_path, 'createCommon.sh')
-        commontarget = os.path.join(workdir, 'createCommon.sh')
-        shutil.copyfile(commonsource, commontarget)
-        open(os.path.join(workdir, 'createVariables.sh'), 'a').close()
-
-        if siu_settings is not None:
-            plistlib.writePlist(siu_settings, os.path.join(workdir, '.SIUSettings'))
-
-    def _cleanup_workdir(self, workdir):
-        os.unlink(os.path.join(workdir, 'createCommon.sh'))
-        os.unlink(os.path.join(workdir, 'createVariables.sh'))
-
-    def build(self, name):
-        """
-        Build the NBI
-
-        :param name: The NBI name to produce.
-        :return:
-        """
-
-        if self._build_environment.is_high_sierra:
-            self._prepare_workdir(self._workdir, {
-                'SIU-SIP-setting': True,
-                'SIU-SKEL-setting': False,
-                'SIU-teamIDs-to-add': []
-            })
-        else:
-            self._prepare_workdir(self._workdir)
-
-        build_exec = os.path.join(self._build_environment.build_exec_path, 'createNetInstall.sh')
-        command = [build_exec, self._workdir, '7000']
-        destpath = os.path.join(self._workdir, name + '.nbi')
-
-        createvariables = {'destPath': destpath,
-                           'dmgTarget': 'NetInstall',
-                           'dmgVolName': name,
-                           'destVolFSType': 'JHFS+',
-                           'installSource': self._source,
-                           'scriptsDebugKey': 'INFO',
-                           'ownershipInfoKey': 'root:wheel'}
-
-        proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, env=createvariables)
-
-        (unused, err) = proc.communicate()
-        if proc.returncode:
-            raise AutoNBIProcessError(err)
-
-        self._cleanup_workdir(self._workdir)
-
-
-
-class InstallSource(object):
-    INSTALLER_TYPE_ESD = 'esd'
-    INSTALLER_TYPE_RECOVERY = 'recovery'
-    INSTALLER_TYPE_NETINSTALL = 'netinstall'
-
-    def __init__(self, installer_path, installer_type=INSTALLER_TYPE_ESD):
-        self._path = installer_path
-        self._type = installer_type
-
-        if self._type == InstallSource.INSTALLER_TYPE_ESD or self._type == InstallSource.INSTALLER_TYPE_NETINSTALL:
-            self._dmg = Dmg(installer_path)
-        else:
-            self._dmg = None
-
-    @property
-    def path(self):
-        return self._path
-
-    @property
-    def dmg(self):
-        return self._dmg
-
-    @property
-    def dmg_mount_point(self):
-        mount = None
-        if len(self.dmg.mount_points) > 1:
-            for i in self.dmg.mount_points[0]:
-                if i.find('dmg'):
-                    mount = i
-        else:
-            mount = self.dmg.mount_points[0]
-
-        return mount
-
-    @property
-    def is_netinstall(self):
-        return self._type == InstallSource.INSTALLER_TYPE_NETINSTALL
-
-    @property
-    def is_esd(self):
-        return self._type == InstallSource.INSTALLER_TYPE_ESD
-
-    @classmethod
-    def pick(cls):
-        """TODO: Implement pickinstaller()"""
-        pass
-
-    @classmethod
-    def from_path(cls, installer_path):
-        """Generate an instance of InstallSource from the given path.
-
-        In AutoNBI this function is performed differently in 'non-auto' mode.
-        This method only covers the auto mode, not the manual picker.
-
-        :param installer_path: The location of a recovery partition or installer app to install
-            from.
-        :raises IOError: If the installer source is unsuitable or unreadable.
-        :returns InstallSource: The install source object.
-        :todo: Method is too complex
-        """
-        if os.path.isdir(installer_path):
-            # Remove a potential trailing slash (ie. from autocompletion)
-            if installer_path.endswith('/'):
-                installer_path = installer_path.rstrip('/')
-
-            if not os.path.exists(installer_path):
-                raise IOError(
-                    'The root path {} is not a valid path - unable to proceed.'.format(installer_path))
-
-            if installer_path.endswith('com.apple.recovery.boot'):
-                print 'Source is a Recovery partition, not mounting an InstallESD...'
-                return cls(installer_path, installer_type=InstallSource.INSTALLER_TYPE_RECOVERY)
-
-            elif not installer_path.endswith('.app'):
-                print 'Mode is auto but the rootpath is not an installer app or DMG, unable to proceed'
-                sys.exit(1)
-
-            elif installer_path.endswith('.app'):
-                install_esd_path = os.path.join(installer_path, 'Contents/SharedSupport/InstallESD.dmg')
-                if os.path.exists(install_esd_path):
-                    return cls(install_esd_path, 'esd')
-                else:
-                    raise IOError('Unable to locate InstallESD.dmg in {} - exiting.'.format(installer_path))
-            else:
-                return None  # this should technically never happen, unless you specified a non installer
-        elif mimetypes.guess_type(installer_path)[0].endswith('diskimage'):
-            print 'Source is a disk image.'
-            if 'NetInstall' in installer_path:
-                print 'Disk image is an existing NetInstall, will modify only...'
-                return cls(installer_path, installer_type=InstallSource.INSTALLER_TYPE_NETINSTALL)
-            elif 'InstallESD' in installer_path:
-                print 'Disk image is an InstallESD, will create new NetInstall...'
-                return cls(installer_path, installer_type=InstallSource.INSTALLER_TYPE_ESD)
-        else:
-            raise IOError('Source is neither an installer app or InstallESD.dmg.')
 
 
 class processNBI(object):
@@ -1446,6 +978,7 @@ def main():
         print >> sys.stderr, 'The given source at %s does not exist.' % arguments.source
         exit(-1)
 
+    from environment import BuildEnvironment
     buildenv = BuildEnvironment.from_host()
 
     # Set 'modifydmg' if any of 'addcustom', 'addpython' or 'addruby' are true
@@ -1458,6 +991,7 @@ def main():
     # Now we start a typical run of the tool, first locate one or more
     #   installer app candidates
     try:
+        from environment import InstallSource
         source = InstallSource.from_path(arguments.source)
     except IOError as e:
         print(e.message)
@@ -1494,6 +1028,7 @@ def main():
         # print 'Creating NBI at ' + destination
         # print 'Base NBI Operating System is ' + osversion
         # createnbi(destination, description, osversion, name, enablenbi, nbiindex, nbitype, isdefault, mount, arguments.source)
+        from builder import NBIBuilder
         builder = NBIBuilder(buildenv, mount, arguments.destination).description(description)
 
         if arguments.enablenbi:
