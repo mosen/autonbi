@@ -213,3 +213,28 @@ def modify_add_frameworks(basesystem_mount_point, major_version='10.13'):
     #         print("Removing cached Payload %s" % cpio_archive)
     #         if os.path.exists(cpio_archive):
     #             os.remove(cpio_archive)
+
+def vnc_password(password, secret='1734516E8BA8C5E2FF1C39567390ADCA'):
+    """
+    Generate a VNC password by XORing a string with the fixed VNC string.
+
+    :param password: The plain password to encode
+    :param secret: The XOR string (defaults to apple's VNC string)
+
+    :returns string: The encoded password
+    """
+    if not password:
+        password = ''
+
+    password = binascii.hexlify(password)
+
+    xor_list = [int(h + l, 16) for (h, l) in zip(secret[0::2], secret[1::2])]
+    value_list = [int(h + l, 16) for (h, l) in zip(password[0::2], password[1::2])]
+
+    def reduce_xor(memo, c):
+        """reduce by XORing and substituting with NUL when out of bounds"""
+        v = value_list.pop(0) if len(value_list) > 0 else 0
+        return memo + chr(c ^ v)
+
+    result = reduce(reduce_xor, xor_list, '')
+    return result

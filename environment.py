@@ -114,11 +114,6 @@ class InstallSource(object):
         return self._type == InstallSource.INSTALLER_TYPE_ESD
 
     @classmethod
-    def pick(cls):
-        """TODO: Implement pickinstaller()"""
-        pass
-
-    @classmethod
     def from_path(cls, installer_path):
         """Generate an instance of InstallSource from the given path.
 
@@ -210,3 +205,36 @@ class InstallSource(object):
         # Return the version and build as found in the parsed plist
         return version_info.get('ProductUserVisibleVersion'), \
                version_info.get('ProductBuildVersion'), basesystem_mount_point
+
+
+def pickinstaller(installers):
+    """pickinstaller provides an interactive picker when more than one
+        potential OS X installer app was returned by locateinstaller() """
+
+    # Initialize choice
+    choice = ''
+
+    # Cycle through the installers and print an enumerated list to stdout
+    for item in enumerate(installers):
+        print "[%d] %s" % item
+
+    # Have the user pick an installer
+    try:
+        idx = int(raw_input("Pick installer to use: "))
+
+    # Got errors? Not a number, bail.
+    except ValueError:
+        print "Not a valid selection - unable to proceed."
+        sys.exit(1)
+
+    # Attempt to pull the installer using the user's input
+    try:
+        choice = installers[idx]
+
+    # Got errors? Not a valid index in the list, bail.
+    except IndexError:
+        print "Not a valid selection - unable to proceed."
+        sys.exit(1)
+
+    # We're done, return the user choice to the caller
+    return choice

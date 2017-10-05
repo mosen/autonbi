@@ -6,6 +6,23 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+
+class HDIUtilError(Exception):
+    def __init__(self, message, return_code=None, command=None, stdout=None, stderr=None):
+        """
+        Error thrown when hdiutil exits unsuccessfully.
+
+        :param message: What hdiutil was trying to do at the time.
+        :param return_code: The return status of hdiutil.
+        :param command: An array representing the command passed to subprocess.Popen()
+        """
+        super(HDIUtilError, self).__init__(message)
+        self.return_code = return_code
+        self.command = command
+        self.stdout = stdout
+        self.stderr = stderr
+
+
 class Dmg(object):
 
     HDIUTIL = '/usr/bin/hdiutil'
@@ -53,46 +70,73 @@ class Dmg(object):
             self._shadow = shadow_path
             command.extend(['-shadow', shadow_path])
 
+        logger.debug(' '.join(command))
         proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (pliststr, err) = proc.communicate()
+        (stdout, stderr) = proc.communicate()
         if proc.returncode:
-            raise IOError('Error: "{}" while mounting {}'.format(err, self.path))
+            raise HDIUtilError(
+                "Failed to mount dmg",
+                return_code=proc.returncode,
+                stdout=stdout, stderr=stderr,
+                command=command
+            )
 
-        plist = plistlib.readPlistFromString(pliststr)
+        plist = plistlib.readPlistFromString(stdout)
 
         self._mount_points = [entity['mount-point'] for entity in plist['system-entities'] if 'mount-point' in entity]
         self._mounted = True
 
     def unmount(self, mount_point=None):
-        """Unmount the .dmg"""
-        if mount_point is None:
-            mount_point = self.mount_points[0]
+        """Unmount the .dmg
 
-        command = [Dmg.HDIUTIL, 'detach', mount_point]
-        proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (unused_output, err) = proc.communicate()
+        :param mount_point: Unmount dmg at a specific mount point. Defaults to this .dmg's mount point.
+        :return:
+        """
 
-        if proc.returncode:
+        try:
+            if mount_point is None:
+                mount_point = self.mount_points[0]
+
+            command = [Dmg.HDIUTIL, 'detach', mount_point]
+            logger.debug(' '.join(command))
+            proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (stdout, stderr) = proc.communicate()
+
+            if proc.returncode:
+                raise HDIUtilError(
+                    "Failed to unmount dmg",
+                    return_code=proc.returncode,
+                    stdout=stdout, stderr=stderr,
+                    command=command
+                )
+        except HDIUtilError as err:
             logger.debug("Polite unmount failed: ", err)
             logger.debug("Attempting to force unmount ", mount_point)
 
-            retcode = subprocess.call(['/usr/bin/hdiutil', 'detach', '-force',
-                                       mount_point])
+            command = ['/usr/bin/hdiutil', 'detach', '-force', mount_point]
+            logger.debug(' '.join(command))
+            return_code = subprocess.call(command)
 
-            logger.info("Unmounting successful...")
-            if retcode:
-                logger.error("Failed to unmount ", mount_point)
+            if return_code:
+                raise HDIUtilError(
+                    "Failed to unmount dmg",
+                    return_code=return_code,
+                    command=command
+                )
 
         self._mounted = False
 
-    def convert(self, fmt, output):
+    def convert(self, output, fmt='UDSP'):
         """Convert a DMG with or without a shadow file to the specified format.
 
+        :param output: The output path of the converted dmg. hdiutil will add extension.
         :param fmt: The -format parameter to hdiutil.
-        :param output: The output path of the converted dmg.
         :return Dmg: The instance of the output dmg.
+        :throws HDIUtilError:
         """
         if self.shadow:
+            # Run a basic 'hdiutil convert' using the shadow file to pick up
+            # any changes we made without needing to convert between r/o and r/w
             command = [Dmg.HDIUTIL, 'convert',
                        '-format', fmt,
                        '-o', output,
@@ -104,12 +148,24 @@ class Dmg(object):
                        '-o', output,
                        self.path]
 
+        logger.debug(' '.join(command))
         proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (unused_output, err) = proc.communicate()
+        (stdout, stderr) = proc.communicate()
+
+        if proc.returncode:
+            raise HDIUtilError(
+                "Error attempting to convert dmg",
+                stdout=stdout, stderr=stderr,
+                return_code=proc.returncode, command=command)
 
         return Dmg(output)
 
     def mounted(self, writable=False):
+        """Return a context manager for this dmg to mount and unmount.
+
+        :param writable: mount with a shadow file to make r/o dmg's writable.
+        :return: MountedDMG
+        """
         return MountedDMG(self.path, use_shadow=writable, shadow_path=self._shadow)
 
     def resize(self, shadow_file=None, size=None):
@@ -125,12 +181,16 @@ class Dmg(object):
             self._shadow = shadow_file
 
         command.append(self.path)
+
         logger.debug(' '.join(command))
-
         proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (output, err) = proc.communicate()
-        logger.debug(output)
+        (stdout, stderr) = proc.communicate()
 
+        if proc.returncode:
+            raise HDIUtilError(
+                "Error attempting to resize dmg",
+                stdout=stdout, stderr=stderr,
+                return_code=proc.returncode, command=command)
 
 
 class MountedDMG(object):
@@ -153,12 +213,15 @@ class MountedDMG(object):
             shadow_name = os.path.basename(self._dmg_path) + '.shadow'
             shadow_root = os.path.dirname(self._dmg_path)
             self._shadow_path = os.path.join(shadow_root, shadow_name)
+        elif use_shadow:
+            self._shadow_path = shadow_path
 
-        self._shadow_path = shadow_path
         self._mount_points = []
 
         if mountpoint is None:
             mountpoint = tempfile.mkdtemp()
+            logger.debug('created temporary mount point for dmg: {}'.format(mountpoint))
+
         self._mountpoint = mountpoint
 
     def __enter__(self):
@@ -171,12 +234,15 @@ class MountedDMG(object):
 
         logger.debug(' '.join(command))
         proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (pliststr, err) = proc.communicate()
+        (stdout, stderr) = proc.communicate()
 
         if proc.returncode:
-            raise IOError('Error: "{}" while mounting {}'.format(err, self._dmg_path))
+            raise HDIUtilError(
+                "Error attempting to resize dmg",
+                stdout=stdout, stderr=stderr,
+                return_code=proc.returncode, command=command)
 
-        plist = plistlib.readPlistFromString(pliststr)
+        plist = plistlib.readPlistFromString(stdout)
 
         self._mount_points = [entity['mount-point'] for entity in plist['system-entities'] if 'mount-point' in entity]
         self.mounted = True
@@ -184,20 +250,35 @@ class MountedDMG(object):
         return self._mount_points
 
     def __exit__(self, *args):
-        command = [MountedDMG.HDIUTIL, 'detach', self._mount_points[0]]
-        proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (unused_output, err) = proc.communicate()
+        try:
+            mount_point = self._mount_points[0]
 
-        if proc.returncode:
+            command = [Dmg.HDIUTIL, 'detach', mount_point]
+            logger.debug(' '.join(command))
+            proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (stdout, stderr) = proc.communicate()
+
+            if proc.returncode:
+                raise HDIUtilError(
+                    "Failed to unmount dmg",
+                    return_code=proc.returncode,
+                    stdout=stdout, stderr=stderr,
+                    command=command
+                )
+        except HDIUtilError as err:
             logger.debug("Polite unmount failed: ", err)
-            logger.debug("Attempting to force unmount ", self._mount_points[0])
+            logger.debug("Attempting to force unmount ", mount_point)
 
-            retcode = subprocess.call([MountedDMG.HDIUTIL, 'detach', '-force',
-                                       self._mount_points[0]])
+            command = ['/usr/bin/hdiutil', 'detach', '-force', mount_point]
+            logger.debug(' '.join(command))
+            return_code = subprocess.call(command)
 
-            logger.info("Unmounting successful...")
-            if retcode:
-                logger.error("Failed to unmount ", self._mount_points[0])
+            if return_code:
+                raise HDIUtilError(
+                    "Failed to unmount dmg",
+                    return_code=return_code,
+                    command=command
+                )
 
 
 class NBI(object):
