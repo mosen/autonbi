@@ -9,18 +9,22 @@ logger = logging.getLogger(__name__)
 
 class HDIUtilError(Exception):
     def __init__(self, message, return_code=None, command=None, stdout=None, stderr=None):
-        """
-        Error thrown when hdiutil exits unsuccessfully.
+        """Error thrown when hdiutil exits unsuccessfully.
 
-        :param message: What hdiutil was trying to do at the time.
+        :param message: Exception message.
         :param return_code: The return status of hdiutil.
         :param command: An array representing the command passed to subprocess.Popen()
+        :param stdout: The stdout returned by hdiutil.
+        :param stderr: The stderr returned by hdiutil.
         """
         super(HDIUtilError, self).__init__(message)
         self.return_code = return_code
         self.command = command
         self.stdout = stdout
         self.stderr = stderr
+
+    def __str__(self):
+        return "Executing: {0}, Returns {1}. {2}".format(' '.join(self.command), self.return_code, self.stderr)
 
 
 class Dmg(object):
@@ -42,25 +46,31 @@ class Dmg(object):
         """If the dmg is mounted with a shadow file, return that path."""
         return self._shadow
 
+    @shadow.setter
+    def shadow(self, value):
+        self._shadow = value
+
     def __init__(self, path):
+        """Dmg represents an unmounted, existing .dmg on the filesystem.
+
+        :param path: Path to an existing .dmg file
+        """
         super(Dmg, self).__init__()
         self._mounted = False
         self._path = path
         self._mount_points = None
         self._shadow = None
 
-    def mount(self, shadow=False, tmp_dir=None):
+    def mount(self, shadow=False):
         """Mount the .dmg
 
-        :param shadow: Mount with a shadow file, for writing modifications to NetInstall.dmg
-        :param tmp_dir: Use this temporary working directory instead of the default random location
-        :return:
-        """
-        if tmp_dir is None:
-            tmp_dir = tempfile.mkdtemp()
+        You can also use the context manager method .mounted()
 
+        :param shadow: Mount with a shadow file, for writing modifications to NetInstall.dmg
+        :return: None
+        """
         command = [Dmg.HDIUTIL, 'attach', self.path,
-                   '-mountRandom', tmp_dir, '-nobrowse', '-plist',
+                   '-mountrandom', '/tmp', '-nobrowse', '-plist',
                    '-owners', 'on']
 
         if shadow:
@@ -168,13 +178,19 @@ class Dmg(object):
         """
         return MountedDMG(self.path, use_shadow=writable, shadow_path=self._shadow)
 
-    def resize(self, shadow_file=None, size=None):
+    def resize(self, shadow_file=None, size=None, sectors=None):
         """Resize a .dmg, optionally with a shadow file.
 
         :param shadow_file: Shadow file, if any.
         :param size: Size specification (for -size)
         """
-        command = [Dmg.HDIUTIL, 'resize', '-size', size]
+        command = [Dmg.HDIUTIL, 'resize']
+
+        if size is not None:
+            command.extend(['-size', size])
+
+        if sectors is not None:
+            command.extend(['-sectors', sectors])
 
         if shadow_file is not None:
             command.extend(['-shadow', shadow_file])
@@ -182,22 +198,54 @@ class Dmg(object):
 
         command.append(self.path)
 
+        print(' '.join(command))
+        proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (stdout, stderr) = proc.communicate()
+
+        if proc.returncode:
+            print(stdout)
+            print(stderr)
+            raise HDIUtilError(
+                "Error attempting to resize dmg at: {}, shadow: {}".format(self.path, shadow_file),
+                stdout=stdout, stderr=stderr,
+                return_code=proc.returncode, command=command)
+
+    def resize_limits(self):
+        """Get resize limits.
+
+        :return: list of limits, first item is minimum size.
+        """
+        command = [Dmg.HDIUTIL, 'resize', '-limits', self.path]
+
         logger.debug(' '.join(command))
         proc = subprocess.Popen(command, bufsize=-1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         (stdout, stderr) = proc.communicate()
 
         if proc.returncode:
             raise HDIUtilError(
-                "Error attempting to resize dmg",
+                "Error attempting to get resize limits",
                 stdout=stdout, stderr=stderr,
                 return_code=proc.returncode, command=command)
+
+        return stdout.split('\t')
+
+    def shrink(self):
+        """Resize a .dmg to its minimum size.
+
+        :return:
+        """
+        limits = self.resize_limits()
+        minimum_size = limits[0]
+
+        self.resize(sectors='min')
+
 
 
 class MountedDMG(object):
 
     HDIUTIL = '/usr/bin/hdiutil'
 
-    def __init__(self, dmg_path, mountpoint=None, use_shadow=False, shadow_path=None):
+    def __init__(self, dmg_path, mountpoint=None, use_shadow=False, shadow_path=None, unmount=True):
         """MountedDMG is a context manager for mounting a .dmg file with or without a shadow file.
 
         :param dmg_path: Path to the .dmg to mount
@@ -205,9 +253,10 @@ class MountedDMG(object):
         :param use_shadow: If true, uses a shadow file to write changes.
         :param shadow_path: Specify a full path to the shadow file to create, if not specified then one is created
             beside the source .dmg
+        :param unmount: Unmount the .dmg when the context exits. Disable this for testing. Will not remove a shadow if
+            one has been created.
         """
         self._dmg_path = dmg_path
-        self._use_shadow = use_shadow
 
         if use_shadow and shadow_path is None:
             shadow_name = os.path.basename(self._dmg_path) + '.shadow'
@@ -215,6 +264,8 @@ class MountedDMG(object):
             self._shadow_path = os.path.join(shadow_root, shadow_name)
         elif use_shadow:
             self._shadow_path = shadow_path
+        else:
+            self._shadow_path = None
 
         self._mount_points = []
 
@@ -223,13 +274,18 @@ class MountedDMG(object):
             logger.debug('created temporary mount point for dmg: {}'.format(mountpoint))
 
         self._mountpoint = mountpoint
+        self._unmount = unmount
 
     def __enter__(self):
+        """Context manager which mounts a .dmg file using hdiutil.
+
+        :return Tuple[List[mount points], Optional[shadow_path]]:
+        """
         command = [MountedDMG.HDIUTIL, 'attach', self._dmg_path,
                    '-mountRandom', self._mountpoint, '-nobrowse', '-plist',
                    '-owners', 'on']
 
-        if self._use_shadow:
+        if self._shadow_path is not None:
             command.extend(['-shadow', self._shadow_path])
 
         logger.debug(' '.join(command))
@@ -238,7 +294,7 @@ class MountedDMG(object):
 
         if proc.returncode:
             raise HDIUtilError(
-                "Error attempting to resize dmg",
+                "Error attempting to attach dmg",
                 stdout=stdout, stderr=stderr,
                 return_code=proc.returncode, command=command)
 
@@ -247,9 +303,13 @@ class MountedDMG(object):
         self._mount_points = [entity['mount-point'] for entity in plist['system-entities'] if 'mount-point' in entity]
         self.mounted = True
 
-        return self._mount_points
+        return self._mount_points, self._shadow_path
 
     def __exit__(self, *args):
+        if not self._unmount:
+            logger.debug('Not unmounting %s as per request', self._dmg_path)
+            return
+
         try:
             mount_point = self._mount_points[0]
 
@@ -284,22 +344,39 @@ class MountedDMG(object):
 class NBI(object):
 
     def __init__(self, path):
-        """NBI represents a .nbi bundle.
+        """NBI represents an existing .nbi bundle.
 
         :param path: Path to the .nbi bundle
         """
         super(NBI, self).__init__()
+
         self._path = path
         self._dmg_path = os.path.join(self._path, 'NetInstall.dmg')
         self._dmg = Dmg(self._dmg_path)
+        self._shadow_path = None
 
     @property
     def path(self):
+        """Path to the .nbi bundle."""
         return self._path
 
     @property
     def dmg(self):
+        """Instance of Dmg representing the NetInstall.dmg"""
         return self._dmg
 
-    def mounted(self, writable=False):
-        return MountedDMG(self._dmg_path, use_shadow=writable)
+    @property
+    def shadow_path(self):
+        return self._shadow_path
+
+    def mounted(self, writable=False, unmount=True):
+        """Get a context manager to mount the NetInstall.dmg
+
+        """
+        return MountedDMG(self._dmg_path, use_shadow=writable, unmount=unmount)
+        # mounted_dmg = MountedDMG(self._dmg_path, use_shadow=writable, unmount=unmount)
+        #
+        # if writable:
+        #     self._shadow_path = mounted_dmg._shadow_path
+        #
+        # return mounted_dmg

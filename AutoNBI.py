@@ -83,6 +83,19 @@ import shutil
 import objc
 from distutils.version import LooseVersion
 
+ansi = {'HEADER': '\033[95m',
+        'OKBLUE': '\033[94m',
+        'OKGREEN': '\033[92m',
+        'WARNING': '\033[93m',
+        'FAIL': '\033[91m',
+        'ENDC': '\033[0m',
+        'BOLD': '\033[1m',
+        'UNDERLINE': '\033[4m'}
+
+
+EMOJI_POOP = u'\U0001F4A9'
+EMOJI_INFORMATION = u'\u2139'
+EMOJI_DISC = u'\U0001F4BF'
 
 # Setup access to the ServerInformation private framework to match board IDs to
 #   model IDs if encountered (10.11 only so far) Code by Michael Lynn. Thanks!
@@ -96,18 +109,6 @@ ServerInformation_bundle = objc.loadBundle('ServerInformation',
                                            ServerInformation,
                                            bundle_path='/System/Library/PrivateFrameworks/ServerInformation.framework')
 
-
-#  Below code from COSXIP by Greg Neagle
-
-def cleanUp():
-    """Cleanup our TMPDIR"""
-    if TMPDIR:
-        shutil.rmtree(TMPDIR, ignore_errors=True)
-
-
-# Above code from COSXIP by Greg Neagle
-
-TMPDIR = None
 sysidenabled = []
 
 
@@ -163,26 +164,30 @@ def main():
     if arguments.verbose > 0:  # TODO: this sucks
         ch.setLevel(logging.DEBUG)
         logger.setLevel(logging.DEBUG)
-        logger.debug('Verbose logging enabled')
+        logger.debug(ansi['HEADER'] + 'Verbose logging enabled' + ansi['ENDC'])
 
     # Are we root?
     if os.getuid() != 0:
-        logger.error('This tool requires sudo or root privileges.')
+        logger.error(ansi['FAIL'] + 'This tool requires sudo or root privileges.' + ansi['ENDC'])
         exit(-1)
 
     if not os.path.exists(arguments.source):
-        logger.error('The given source at %s does not exist.', arguments.source)
+        logger.error(ansi['FAIL'] + 'The given source at %s does not exist.' + ansi['ENDC'], arguments.source)
         exit(-1)
+
+    TMPDIR = tempfile.mkdtemp()
 
     from environment import BuildEnvironment
     buildenv = BuildEnvironment.from_host()
 
     try:
         from environment import InstallSource
-        logger.debug('Attempting to locate a valid installer at location: %s', arguments.source)
+        logger.debug(ansi['HEADER'] + '  Attempting to locate a valid installer at location:' + ansi['ENDC'] + ' %s', arguments.source)
         source = InstallSource.from_path(arguments.source)
+
+        logger.debug(ansi['OKBLUE'] + 'Got source: ' + ansi['ENDC'] + '%s', source.path)
     except IOError as e:
-        logger.error('Error locating installer', exc_info=e)
+        logger.error(ansi['FAIL'] + 'Error locating installer' + ansi['ENDC'], exc_info=e)
         sys.exit(1)
 
     if source.is_netinstall or source.is_esd:
@@ -241,14 +246,19 @@ def main():
         with open(os.path.join(nbi_path, 'NBImageInfo.plist'), 'w+') as fd:
             fd.write(plist_value)
 
-        with nbi.mounted(writable=True) as mount_points:
-            logger.info("NBI mounted at %s", ','.join(mount_points))
+        nbi_shadow_file = None
+
+        with nbi.mounted(writable=True, unmount=False) as mount_points, nbi_shadow_file:
+            logger.info("NBI %s, mounted at %s", nbi.path, ','.join(mount_points))
+            nbi.dmg.shadow = nbi_shadow_file
 
             if arguments.folder and os.path.isdir(arguments.folder):
                 customfolder = os.path.abspath(arguments.folder)
 
             # TODO: detect whether BaseSystem even needs to be modified
+            # Original: if modifybasesystem: in def modify()
             if buildenv.is_high_sierra:
+                logger.info("Install source is 10.13 or newer, BaseSystem.dmg is in an alternate location...")
                 base_system_dmg_path = os.path.join(mount_points[0], 'Install macOS High Sierra.app', 'Contents',
                                                     'SharedSupport', 'BaseSystem.dmg')
             else:
@@ -256,59 +266,55 @@ def main():
 
             base_system_shadow_path = os.path.join(tempfile.mkdtemp(), 'BaseSystem.shadow')
             base_system_dmg = Dmg(base_system_dmg_path)
+
+            logger.info("Running dmg.resize...")
+            print(base_system_dmg.path)
+            print(base_system_shadow_path)
             base_system_dmg.resize(base_system_shadow_path, size='8G')
 
             with base_system_dmg.mounted(writable=True) as base_mounts:
                 logger.info("BaseSystem mounted at %s", ','.join(base_mounts))
 
+            logger.info("BaseSystem unmounted")
 
+            # Set some DMG conversion targets for later
+            basesystemrw = os.path.join(TMPDIR, 'BaseSystemRW.dmg')
+            basesystemro = os.path.join(TMPDIR, 'BaseSystemRO.dmg')
 
+            # Convert to UDRW, the only format that will allow resizing the BaseSystem.dmg later
+            logger.info("Converting BaseSystem to R/W")
+            converted_dmg = base_system_dmg.convert(basesystemrw, 'UDRW')
+            logger.info(ansi['OKBLUE'] + "Converted BaseSystem, output in:" + ansi['ENDC'] + "%s", converted_dmg.path)
+            # convertresult = self.runcmd(self.dmgconvert(basesystemdmg, basesystemrw, basesystemshadow, 'UDRW'))
+            # Delete the original DMG if this is not a netinstall, we need to clear up some space where possible
 
-    # Make our modifications if any were provided from the CLI
-    # if modifynbi:
-    #     if addcustom:
-    #         try:
-    #             if os.path.isdir(customfolder):
-    #                 customfolder = os.path.abspath(customfolder)
-    #         except IOError:
-    #             print("%s is not a valid path - unable to proceed." % customfolder)
-    #             sys.exit(1)
-    #
-    #     # Path to the NetInstall.dmg
-    #     if shouldcreatenbi:
-    #         netinstallpath = os.path.join(destination, name + '.nbi', 'NetInstall.dmg')
-    #     else:
-    #         netinstallpath = arguments.source
-    #         mount = None
-    #
-    #     # Initialize a new processNBI() instance as 'nbi'
-    #     nbi = processNBI(customfolder, addpython, addruby, utilplist)
-    #
-    #     # Run makerw() to enable modifications
-    #     nbimount, nbishadow = nbi.makerw(netinstallpath)
-    #
-    #     print("NBI mounted at %s" % nbimount)
-    #
-    #     nbi.modify(nbimount, netinstallpath, nbishadow, mount)
-    #
-    #     # We're done, unmount all the things
-    #     if shouldcreatenbi:
-    #         unmountdmg(mount)
-    #
-    #     distutils.dir_util.remove_tree(TMPDIR)
-    #
-    #     print("-------------------------------------------------------------------------")
-    #     print 'Modifications complete...'
-    #     print 'Done.'
-    # else:
-    #     # We're done, unmount all the things
-    #     unmountdmg(mount)
-    #     distutils.dir_util.remove_tree(TMPDIR)
-    #
-    #     print("-------------------------------------------------------------------------")
-    #     print 'No modifications will be made...'
-    #     print 'Done.'
+            logger.info("Removing original BaseSystem.dmg")
+            os.remove(base_system_dmg_path)
 
+            # Resize BaseSystem.dmg to its smallest possible size (using hdiutil resize -limits)
+            logger.info("Shrinking %s", converted_dmg.path)
+            converted_dmg.shrink()
+
+            # Convert again, to UDRO, to shrink the final DMG size more
+            logger.info("Converting %s to Read Only", converted_dmg.path)
+            converted_ro_dmg = converted_dmg.convert(basesystemro, 'UDRO')
+
+            # Rename the finalized DMG to its intended name BaseSystem.dmg
+            logger.info("Copying read-only BaseSystem.dmg back into mounted .nbi at %s", base_system_dmg_path)
+            shutil.copyfile(converted_ro_dmg.path, base_system_dmg_path)
+
+        # We're done, unmount the outer NBI DMG.
+        logger.info("NBI unmounted")
+
+        # Convert modified DMG to .sparseimage, this will shrink the image
+        # automatically after modification.
+        logger.info('-' * 20)
+        logger.info('Sealing DMG at path %s', nbi.dmg.path)
+
+        nbi.dmg.convert("/tmp/autonbi")
+
+        # dmgfinal = convertdmg(dmgpath, nbishadow)
+        # print('Got back final DMG as ' + dmgfinal + ' from convertdmg()...')
 
 if __name__ == '__main__':
     main()
